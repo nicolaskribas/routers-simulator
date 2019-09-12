@@ -12,7 +12,7 @@
 #define TRUE 1
 #define FALSE 0
 
-pthread_mutex_t count_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t to_send_buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct router{
     int id;

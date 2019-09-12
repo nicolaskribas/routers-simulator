@@ -29,5 +29,8 @@ void *receiver(void *arg){
             printf("[ERROR] receiving message\n");
             exit(1);
         }
+        pthread_mutex_lock(&to_send_buffer_mutex);
+        pthread_mutex_unlock(&to_send_buffer_mutex);
+
     }
 }
