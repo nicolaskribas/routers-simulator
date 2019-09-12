@@ -5,21 +5,27 @@
 #include "threads/receiver.c"
 #include "data_structures/dijkstra.c"
 
-int get_settings(router *routers, int *n_routers){
-    int  i;
+int get_routers_settings(int *n_routers, router **routers, int self_id)
+{
+    int  i, flag = TRUE;
     router aux;
     FILE *routers_settings = fopen("../config/roteador.config", "r");
         for(i = 0, *n_routers = 0; fscanf(routers_settings,"%d %d %s", &aux.id, &aux.port, aux.ip) != EOF; i++)
         {
-            *n_routers++;
-            routers = (router *) realloc (routers, sizeof(router) * n_routers);
+            *routers = realloc (*routers, sizeof(router) * ++(*n_routers));
 
-            routers[i].id = aux.id;
-            routers[i].port = aux.port;
-            sprintf(routers[i].ip, "%s", aux.ip);
+            (*routers)[i].id = aux.id;
+            (*routers)[i].port = aux.port;
+            sprintf((*routers)[i].ip, "%s", aux.ip);
+
+            if(aux.id == self_id) flag = FALSE;
         }
     fclose(routers_settings);
 
+    if(flag){
+        printf("[ERROR] Router with ID %d not configurated.\n", self_id);
+        exit(0);
+    }
     return(1);
 
     // int a, b, cost;
@@ -39,6 +45,11 @@ int main(int argc, char *argv[]){
         exit(0);
     }
     int self_id = atoi(argv[1]);
+
+    int n_routers;
+    router *routers = NULL;
+
+    get_routers_settings(&n_routers, &routers, self_id);
 
     pthread_t Receiver, Sender, Writer;
 

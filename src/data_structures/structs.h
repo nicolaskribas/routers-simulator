@@ -5,6 +5,8 @@
 #include <stdlib.h> //realloc
 
 #define BUFFERLEN 100
+#define TRUE 1
+#define FALSE 0
 
 typedef struct router{
     int id;
