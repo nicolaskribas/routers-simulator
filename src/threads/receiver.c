@@ -1,4 +1,10 @@
 #include "../data_structures/structs.h"
+
+package unkpack(char message[]){
+    package pack;
+    return pack;
+}
+
 void *receiver(void *arg){
     router *self_router = (router *) arg;
     struct sockaddr_in server, client;
@@ -23,14 +29,24 @@ void *receiver(void *arg){
 
     while(1){
         fflush(stdout);
-        memset(buffer,'\0', BUFFERLEN);
-        if ((recv_len = recvfrom(sock, buffer, BUFFERLEN, 0, (struct sockaddr *) &client, &socklen)) == -1)
+        memset(buffer,'\0', MESSAGELEN);
+        if ((recv_len = recvfrom(sock, buffer, MESSAGELEN, 0, (struct sockaddr *) &client, &socklen)) == -1)
         {
             printf("[ERROR] receiving message\n");
             exit(1);
         }
-        pthread_mutex_lock(&to_send_buffer_mutex);
-        pthread_mutex_unlock(&to_send_buffer_mutex);
+        // down(&empty);
+        if(!sem_trywait(&empty)){
+            pthread_mutex_lock(&to_send_buffer_mutex);
+            to_send_buffer[end_buffer] = unpack(buffer);
+            next();
+            pthread_mutex_unlock(&to_send_buffer_mutex);
+            // up(&full)
+            sem_post(&full);
+        }else{
+            printf("Package discarted\n");
+        }
+
 
     }
 }

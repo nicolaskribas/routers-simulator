@@ -53,16 +53,20 @@ int main(int argc, char *argv[]){
     self_router = malloc(sizeof(router));
 
     get_routers_settings(&n_routers, &routers, self_id, self_router);
+    start_buffer = 0;
+    end_buffer = 0;
+    sem_init(&full, 0 , 0);
+    sem_init(&empty, 0, BUFFERLEN);
 
     pthread_t Receiver, Sender, Writer;
 
-    pthread_create(&Receiver, NULL, receiver, self_router);
-    pthread_create(&Sender, NULL, sender, NULL);
-    pthread_create(&Writer, NULL, writer, NULL);
-
-    pthread_join(Receiver, NULL);
-    pthread_join(Sender, NULL);
-    pthread_join(Writer, NULL);
+    // pthread_create(&Receiver, NULL, receiver, self_router);
+    // pthread_create(&Sender, NULL, sender, NULL);
+    // pthread_create(&Writer, NULL, writer, NULL);
+    //
+    // pthread_join(Receiver, NULL);
+    // pthread_join(Sender, NULL);
+    // pthread_join(Writer, NULL);
 
     return(0);
 }
