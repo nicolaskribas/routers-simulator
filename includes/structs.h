@@ -11,7 +11,7 @@ typedef struct package{
     int id_origin;
     int id_destination;
     char ack;
-    char message[MESSAGELEN];
+    char message[MESSAGE_LEN];
 }package;
 
 

@@ -1,28 +1,12 @@
 #include "receiver.h"
 #include "settings.h"
 
-package unkpack(char message[]){
-    package pack;
-    return pack;
-}
+
 
 void *receiver(void *arg){
-    receiver_args *Receiver_args = (receiver_args *) arg;
-    package *to_send_buffer = Receiver_args.to_send_buffer;
-    pthread_mutex_t *to_send_buffer_mutex = Receiver_args.to_send_buffer_mutex;
-    sem_t *to_send_buffer_full = Receiver_args.to_send_buffer_full;
-    sem_t *to_send_buffer_empty = Receiver_args.to_send_buffer_empty;
-    int *next_empty = Receiver_args.next_empty;
-    router self_router = Receiver_args->self_router;
-
     struct sockaddr_in server, client;
-    int sock, socklen = sizeof(server), recv_len;
+    int socklen = sizeof(server), recv_len;
     char buffer[sizeof(package)];
-
-    if((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1){
-        printf("[ERROR] receiver socket creation\n");
-        exit(1);
-    }
 
     memset((char *) &server, 0, sizeof(server));
 
@@ -37,8 +21,8 @@ void *receiver(void *arg){
 
     while(1){
         fflush(stdout);
-        memset(buffer,'\0', sizeof(package));
-        if ((recv_len = recvfrom(sock, buffer, sizeof(package), 0, (struct sockaddr *) &client, &socklen)) == -1)
+        memset(udp_message,'\0', UDP_MESSAGE_LEN;
+        if ((recv_len = recvfrom(sock, upd_message, UDP_MESSAGE_LEN, 0, (struct sockaddr *) &client, &socklen)) == -1)
         {
             printf("[ERROR] receiving message\n");
             exit(1);
@@ -46,8 +30,10 @@ void *receiver(void *arg){
 
         if(!sem_trywait(to_send_buffer_empty)){
             pthread_mutex_lock(to_send_buffer_mutex);
-            to_send_buffer[*next_empty] = pack(buffer);
-            // adicionar o next_empty
+
+            strncpy(to_send_buffer[to_send_buffer_rear], udp_message, UDP_MESSAGE_LEN);
+            to_send_buffer_rear = (to_send_buffer_rear + 1) % TO_SEND_BUFFER_LEN;
+
             pthread_mutex_unlock(to_send_buffer_mutex);
 
             sem_post(to_send_buffer_full);

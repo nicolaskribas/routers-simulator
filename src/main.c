@@ -41,6 +41,12 @@ int get_routers_settings(int *n_routers, router **routers, int self_id, router *
     // fclose(enlaces);
 }
 
+int to_send_buffer_rear;                            // A traseira da fila circular
+sem_t to_send_buffer_full, to_send_buffer_empty;    //Semafaros produtor-consumidor
+pthread_mutex_t to_send_buffer_mutex;               //Mutex região critica da fila
+package to_send_buffer[TO_SEND_BUFFER_LEN];         //Fila circular
+char ack;
+int socket;
 int main(int argc, char *argv[]){
 
     if(argc != 2){
@@ -51,56 +57,28 @@ int main(int argc, char *argv[]){
 
     int n_routers;
     router *self_router, *routers = NULL;
-    self_router = malloc(sizeof(router));
     get_routers_settings(&n_routers, &routers, self_id, self_router);
 
-    // inicia mutex e semafaros
-    pthread_mutex_t to_send_buffer_mutex;
-    sem_t to_send_buffer_full, to_send_buffer_empty,;
+    if ( (socket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+    {
+        puts("socket");
+    }
+    ack = "F";
+    to_send_buffer_rear = 0;
+    // inicia semafaros
     sem_init(&to_send_buffer_full, 0 , 0);
     sem_init(&to_send_buffer_empty, 0, TO_SEND_BUFFER_LEN);
-
-    // inicia variáveis compartilhadas entre threads
-    int next_empty = 0;
-    package to_send_buffer[TO_SEND_BUFFER_LEN];
-    char ack = "F";
-
-    // controi argumentos das threads
-    receiver_args Receiver_args;
-    Receiver_args.to_send_buffer = to_send_buffer;
-    Receiver_args.to_send_buffer_mutex = &to_send_buffer_mutex;
-    Receiver_args.to_send_buffer_full = &to_send_buffer_full;
-    Receiver_args.to_send_buffer_empty = &to_send_buffer_empty;
-    Receiver_args.self_router = *self_router;
-    Receiver_args.next_empty = &next_empty;
-
-    sender_args Sender_args;
-    Receiver_args.to_send_buffer = to_send_buffer;
-    Sender_args.to_send_buffer_mutex = &to_send_buffer_mutex;
-    Sender_args.to_send_buffer_full = &to_send_buffer_full;
-    Sender_args.to_send_buffer_empty = &to_send_buffer_empty;
-    Sender_args.self_router = *self_router;
-
-    writer_args Writer_args = (writer_args) Receiver_args;
-
-
-
-
-
-
-
-
 
     // inicia threads
     pthread_t Receiver, Sender, Writer;
 
-    // pthread_create(&Receiver, NULL, receiver, &Receiver_args);
-    // pthread_create(&Sender, NULL, sender, &Sender_args);
-    // pthread_create(&Writer, NULL, writer, &Writer_args);
-    //
-    // pthread_join(Receiver, NULL);
-    // pthread_join(Sender, NULL);
-    // pthread_join(Writer, NULL);
+    pthread_create(&Receiver, NULL, receiver, NULL);
+    pthread_create(&Sender, NULL, sender, NULL);
+    pthread_create(&Writer, NULL, writer, NULL);
+
+    pthread_join(Receiver, NULL);
+    pthread_join(Sender, NULL);
+    pthread_join(Writer, NULL);
 
     return(0);
 }
