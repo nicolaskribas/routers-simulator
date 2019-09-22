@@ -1,11 +1,14 @@
-#include "main.h"
 #include "settings.h"
 #include "receiver.h"
 #include "sender.h"
 #include "writer.h"
+#include "struct.h"
+#include <semaphore.h>
+#include <stdio.h>
+#include <stdlib.h> //atoi()
+#include <string.h> //memset()
 
-
-int get_routers_settings(int *n_routers, router **routers, int self_id, router *self_router)
+int get_routers_settings(int *n_routers, router **routers, int self_id)
 {
     int  i, flag = TRUE;
     router aux;
@@ -20,7 +23,7 @@ int get_routers_settings(int *n_routers, router **routers, int self_id, router *
 
             if(aux.id == self_id){
                 flag = FALSE;
-                *self_router = aux;
+                self_router = aux;
             }
         }
     fclose(routers_settings);
@@ -47,6 +50,9 @@ pthread_mutex_t to_send_buffer_mutex;               //Mutex região critica da f
 package to_send_buffer[TO_SEND_BUFFER_LEN];         //Fila circular
 char ack;
 int socket;
+router self_router;
+struct sockaddr_in si_me;
+
 int main(int argc, char *argv[]){
 
     if(argc != 2){
@@ -55,19 +61,42 @@ int main(int argc, char *argv[]){
     }
     int self_id = atoi(argv[1]);
 
+
+
+
+
     int n_routers;
-    router *self_router, *routers = NULL;
-    get_routers_settings(&n_routers, &routers, self_id, self_router);
+    router *routers = NULL;
+    get_routers_settings(&n_routers, &routers, self_id);
+
+
+
+
+
 
     if ( (socket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
         puts("socket");
     }
+
+    memset(&si_me, 0, sizeof(si_me));
+    si_me.sin_family = AFINET;
+    si_me.sin_port = htons(self_router.port);
+    si_me.sin_addr.s_addr = htonl(INADDR_ANY);
+
+
+
+
+
+
     ack = "F";
     to_send_buffer_rear = 0;
     // inicia semafaros
     sem_init(&to_send_buffer_full, 0 , 0);
     sem_init(&to_send_buffer_empty, 0, TO_SEND_BUFFER_LEN);
+
+
+
 
     // inicia threads
     pthread_t Receiver, Sender, Writer;

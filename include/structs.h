@@ -10,7 +10,7 @@ typedef struct router{
 typedef struct package{
     int id_origin;
     int id_destination;
-    char ack;
+    int ack;
     char message[MESSAGE_LEN];
 }package;
 

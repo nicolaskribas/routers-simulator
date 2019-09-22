@@ -2,4 +2,5 @@
 #define WRITER_H
 
 void *writer(void *arg);
+
 #endif
