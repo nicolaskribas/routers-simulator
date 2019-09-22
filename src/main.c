@@ -1,12 +1,25 @@
-#include "settings.h"
-#include "receiver.h"
-#include "sender.h"
-#include "writer.h"
-#include "struct.h"
-#include <semaphore.h>
-#include <stdio.h>
+#include <settings.h>
+#include <receiver.h>
+#include <sender.h>
+#include <writer.h>
+#include <structs.h>
+#include <semaphore.h> //sem_t
+#include <stdio.h>  //scanf()
 #include <stdlib.h> //atoi()
 #include <string.h> //memset()
+#include <sys/socket.h> //socket()
+#include <arpa/inet.h> //IPPROTO_UDP
+#include <pthread.h> //phthread_t
+
+int to_send_buffer_rear;                            // A traseira da fila circular
+sem_t to_send_buffer_full, to_send_buffer_empty;    //Semafaros produtor-consumidor
+pthread_mutex_t to_send_buffer_mutex;               //Mutex região critica da fila
+package to_send_buffer[TO_SEND_BUFFER_LEN];         //Fila circular
+char ack;
+int mysocket;
+router self_router;
+struct sockaddr_in si_me;
+
 
 int get_routers_settings(int *n_routers, router **routers, int self_id)
 {
@@ -44,14 +57,7 @@ int get_routers_settings(int *n_routers, router **routers, int self_id)
     // fclose(enlaces);
 }
 
-int to_send_buffer_rear;                            // A traseira da fila circular
-sem_t to_send_buffer_full, to_send_buffer_empty;    //Semafaros produtor-consumidor
-pthread_mutex_t to_send_buffer_mutex;               //Mutex região critica da fila
-package to_send_buffer[TO_SEND_BUFFER_LEN];         //Fila circular
-char ack;
-int socket;
-router self_router;
-struct sockaddr_in si_me;
+
 
 int main(int argc, char *argv[]){
 
@@ -74,13 +80,13 @@ int main(int argc, char *argv[]){
 
 
 
-    if ( (socket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+    if ( (mysocket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
         puts("socket");
     }
 
     memset(&si_me, 0, sizeof(si_me));
-    si_me.sin_family = AFINET;
+    si_me.sin_family = AF_INET;
     si_me.sin_port = htons(self_router.port);
     si_me.sin_addr.s_addr = htonl(INADDR_ANY);
 
@@ -89,7 +95,7 @@ int main(int argc, char *argv[]){
 
 
 
-    ack = "F";
+    ack = 'F';
     to_send_buffer_rear = 0;
     // inicia semafaros
     sem_init(&to_send_buffer_full, 0 , 0);

@@ -1,6 +1,6 @@
-#ifndef WRITER_H
-#define WRITER_H
+// #ifndef WRITER_H
+// #define WRITER_H
 
 void *writer(void *arg);
 
-#endif
+// #endif

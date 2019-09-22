@@ -1,6 +1,6 @@
-#ifndef RECEIVER_H
-#define RECEIVER_H
+// #ifndef RECEIVER_H
+// #define RECEIVER_H
 
 void *receiver(void *arg);
 
-#endif
+// #endif

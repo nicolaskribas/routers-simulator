@@ -1,6 +1,6 @@
-#ifndef SENDER_H
-#define SENDER_H
+// #ifndef SENDER_H
+// #define SENDER_H
 
-void *writer(void *arg);
+void *sender(void *arg);
 
-#endif
+// #endif
