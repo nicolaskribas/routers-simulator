@@ -25,7 +25,7 @@ int get_routers_settings(int *n_routers, router **routers, int self_id)
 {
     int  i, flag = TRUE;
     router aux;
-    FILE *routers_settings = fopen("../config/roteador.config", "r");
+    FILE *routers_settings = fopen("config/roteador.config", "r");
         for(i = 0, *n_routers = 0; fscanf(routers_settings,"%d %d %s", &aux.id, &aux.port, aux.ip) != EOF; i++)
         {
             *routers = realloc (*routers, sizeof(router) * ++(*n_routers));
