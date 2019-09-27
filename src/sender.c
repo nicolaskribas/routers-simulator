@@ -10,7 +10,7 @@
 void send_package(package to_send_package){
     struct sockaddr_in si_other;
     memset(&si_other, 0, sizeof(si_other));
-    int slen;
+    int slen = sizeof(si_other);
     si_other.sin_family = AF_INET;
     si_other.sin_port = htons(8888); // AQUI VAI A PORTA DE ACORDO COM O DIKSTRA
 
