@@ -12,6 +12,12 @@ typedef struct router{
     char ip[15];
 }router;
 
+typedef struct routing_row{
+    int id_destination;
+    int id_next;
+    int cost;
+}routing_row;
+
 typedef struct package{
     int id_origin;
     int id_destination;
