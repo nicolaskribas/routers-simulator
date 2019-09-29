@@ -1,7 +1,4 @@
 #include <settings.h>
-#include <receiver.h>
-#include <sender.h>
-#include <writer.h>
 #include <structs.h>
 #include <semaphore.h> //sem_t
 #include <stdio.h>  //scanf()
@@ -10,6 +7,7 @@
 #include <sys/socket.h> //socket()
 #include <arpa/inet.h> //IPPROTO_UDP
 #include <pthread.h> //phthread_t
+#include <routing_table.h>
 
 int to_send_buffer_rear;                            // A traseira da fila circular
 sem_t to_send_buffer_full, to_send_buffer_empty;    //Semafaros produtor-consumidor
@@ -19,20 +17,143 @@ char ack;
 int mysocket;
 router self_router;
 struct sockaddr_in si_me;
+routing_row *routing_table = NULL;
+router *routers = NULL;
+int n_routers = 0;
+
+void *receiver(void *arg){
+    struct sockaddr_in si_other;
+    int socketlen = sizeof(si_other), recv_len;
+    package received_package;
+
+    if(bind(mysocket, (struct sockaddr*)&si_me, sizeof(si_me)) == -1){
+        printf("[ERROR] receiver socket binding\n");
+        // exit(1);
+    }
+
+    while(1){
+        fflush(stdout);
+        memset(&received_package, 0, sizeof(received_package));
+        if ((recv_len = recvfrom(mysocket, &received_package, sizeof(received_package), 0, (struct sockaddr *) &si_other, &socketlen)) == -1)
+        {
+            printf("[ERROR] receiving message\n");
+            // exit(1);
+        }
+        printf("Pacote passando %d -> %d\n", received_package.id_origin, received_package.id_destination);
+        if(received_package.id_destination != self_router.id){
+            if(!sem_trywait(&to_send_buffer_empty)){
+                pthread_mutex_lock(&to_send_buffer_mutex);
+
+                to_send_buffer[to_send_buffer_rear] = received_package;
+                to_send_buffer_rear = (to_send_buffer_rear + 1) % TO_SEND_BUFFER_LEN;
+
+                pthread_mutex_unlock(&to_send_buffer_mutex);
+
+                sem_post(&to_send_buffer_full);
+            }else{
+                printf("Package discarted\n");
+            }
+        }
 
 
-int get_routers_settings(int *n_routers, router **routers, int self_id)
+    }
+}
+
+void send_package(package to_send_package){
+    int i, j;
+    for(i = 0; i < n_routers-1; i++){
+        if(to_send_package.id_destination == routing_table[i].id_destination){
+            break;
+        }
+    }
+    for(j = 0; j < n_routers; j++){
+        if(routing_table[i].id_next == routers[j].id){
+            break;
+        }
+    }
+
+    struct sockaddr_in si_other;
+
+    memset(&si_other, 0, sizeof(si_other));
+    int slen = sizeof(si_other);
+    si_other.sin_family = AF_INET;
+    si_other.sin_port = htons(routers[j].port); // AQUI VAI A PORTA DE ACORDO COM O DIKSTRA
+
+    if (inet_aton(routers[j].ip, &si_other.sin_addr) == 0) // AQUI VAI O IP DE ACORDO COM O DIKSTRA
+    {
+        printf("inet_aton() failed\n");
+        printf("Deu probllema\n");
+    }
+
+    if (sendto(mysocket, &to_send_package, sizeof(to_send_package) , 0 , (struct sockaddr *) &si_other, slen)==-1)
+    {
+        printf("Deu probrema\n");
+    }
+}
+
+void *sender(void *arg){
+    int to_send_buffer_front = 0;
+    package to_send_package;
+
+    while(1){
+        sem_wait(&to_send_buffer_full);
+        pthread_mutex_lock(&to_send_buffer_mutex);
+
+        to_send_package = to_send_buffer[to_send_buffer_front];
+        to_send_buffer_front = (to_send_buffer_front + 1) % TO_SEND_BUFFER_LEN;
+
+        pthread_mutex_unlock(&to_send_buffer_mutex);
+        sem_post(&to_send_buffer_empty);
+
+        send_package(to_send_package);
+    }
+}
+
+void *writer(void *arg){
+    package new_package;
+    int try_count;
+
+    while(TRUE){
+        memset(&new_package, 0, sizeof(new_package));
+        printf("Enter destination ID: ");
+        scanf("%d", &new_package.id_destination);
+        printf("Enter message: ");
+        scanf("%s", new_package.message);
+        new_package.id_origin = self_router.id;
+        new_package.ack = FALSE;
+
+        if(!sem_trywait(&to_send_buffer_empty)){
+            pthread_mutex_lock(&to_send_buffer_mutex);
+
+            to_send_buffer[to_send_buffer_rear] = new_package;
+            to_send_buffer_rear = (to_send_buffer_rear + 1) % TO_SEND_BUFFER_LEN;
+
+            pthread_mutex_unlock(&to_send_buffer_mutex);
+            sem_post(&to_send_buffer_full);
+
+            ack = TRUE;
+
+            try_count = 1;
+
+
+
+        }
+    }
+
+}
+
+int get_routers_settings(int self_id)
 {
     int  i, flag = TRUE;
     router aux;
     FILE *routers_settings = fopen("config/roteador.config", "r");
-        for(i = 0, *n_routers = 0; fscanf(routers_settings,"%d %d %s", &aux.id, &aux.port, aux.ip) != EOF; i++)
+        for(i = 0, n_routers = 0; fscanf(routers_settings,"%d %d %s", &aux.id, &aux.port, aux.ip) != EOF; i++)
         {
-            *routers = realloc (*routers, sizeof(router) * ++(*n_routers));
+            routers = realloc (routers, sizeof(router) * ++(n_routers));
 
-            (*routers)[i].id = aux.id;
-            (*routers)[i].port = aux.port;
-            sprintf((*routers)[i].ip, "%s", aux.ip);
+            routers[i].id = aux.id;
+            routers[i].port = aux.port;
+            sprintf((routers)[i].ip, "%s", aux.ip);
 
             if(aux.id == self_id){
                 flag = FALSE;
@@ -46,15 +167,6 @@ int get_routers_settings(int *n_routers, router **routers, int self_id)
         exit(1);
     }
     return(0);
-
-    // int a, b, cost;
-    // FILE *enlaces = fopen("../config/enlaces.config", "r");
-    //     for(i = 0, n_edges = 0; fscanf(elaces,"%d %d %d", %a, %b, %cost) != EOF; i++)
-    //     {
-    //
-    //
-    //     }
-    // fclose(enlaces);
 }
 
 
@@ -71,10 +183,10 @@ int main(int argc, char *argv[]){
 
 
 
-    int n_routers;
-    router *routers = NULL;
-    get_routers_settings(&n_routers, &routers, self_id);
 
+    get_routers_settings(self_id);
+    routing_table = realloc(routing_table, sizeof(routing_row)*(n_routers-1));
+    create_routing_table(self_id, n_routers);
 
 
 
