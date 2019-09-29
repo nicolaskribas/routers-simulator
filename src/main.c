@@ -8,19 +8,17 @@
 #include <arpa/inet.h> //IPPROTO_UDP
 #include <pthread.h> //phthread_t
 #include <routing_table.h>
+#include <time.h>
 
-int to_send_buffer_rear;                            // A traseira da fila circular
+int to_send_buffer_rear, ack, seq_num = 0, mysocket, n_routers = 0;
 sem_t to_send_buffer_full, to_send_buffer_empty;    //Semafaros produtor-consumidor
-pthread_mutex_t to_send_buffer_mutex;               //Mutex região critica da fila
+pthread_mutex_t to_send_buffer_mutex, ack_mutex;    //Mutex região critica da fila
 package to_send_buffer[TO_SEND_BUFFER_LEN];         //Fila circular
-char ack;
-int mysocket;
-router self_router;
 struct sockaddr_in si_me;
 routing_row *routing_table = NULL;
 router *routers = NULL;
-int n_routers = 0;
-
+router self_router;
+int swap;
 void *receiver(void *arg){
     struct sockaddr_in si_other;
     int socketlen = sizeof(si_other), recv_len;
@@ -39,8 +37,32 @@ void *receiver(void *arg){
             printf("[ERROR] receiving message\n");
             // exit(1);
         }
-        printf("Pacote passando %d -> %d\n", received_package.id_origin, received_package.id_destination);
         if(received_package.id_destination != self_router.id){
+            printf("\nPacote passando %d -> %d\n", received_package.id_origin, received_package.id_destination);
+            if(!sem_trywait(&to_send_buffer_empty)){
+                pthread_mutex_lock(&to_send_buffer_mutex);
+
+                to_send_buffer[to_send_buffer_rear] = received_package;
+                to_send_buffer_rear = (to_send_buffer_rear + 1) % TO_SEND_BUFFER_LEN;
+
+                pthread_mutex_unlock(&to_send_buffer_mutex);
+
+                sem_post(&to_send_buffer_full);
+            }else{
+                printf("Package discarted\n");
+            }
+        }else if(received_package.ack == TRUE){
+            pthread_mutex_lock(&ack_mutex);
+            if(ack == TRUE && seq_num == received_package.seq_num){
+                ack = FALSE;
+            }
+            pthread_mutex_unlock(&ack_mutex);
+        }else{
+            printf("\nNova mensagem de %d: %s\n", received_package.id_origin, received_package.message);
+            received_package.ack = TRUE;
+            swap = received_package.id_destination;
+            received_package.id_destination = received_package.id_origin;
+            received_package.id_origin = swap;
             if(!sem_trywait(&to_send_buffer_empty)){
                 pthread_mutex_lock(&to_send_buffer_mutex);
 
@@ -54,8 +76,6 @@ void *receiver(void *arg){
                 printf("Package discarted\n");
             }
         }
-
-
     }
 }
 
@@ -85,8 +105,7 @@ void send_package(package to_send_package){
         printf("Deu probllema\n");
     }
 
-    if (sendto(mysocket, &to_send_package, sizeof(to_send_package) , 0 , (struct sockaddr *) &si_other, slen)==-1)
-    {
+    if (sendto(mysocket, &to_send_package, sizeof(to_send_package) , 0 , (struct sockaddr *) &si_other, slen)==-1){
         printf("Deu probrema\n");
     }
 }
@@ -111,8 +130,7 @@ void *sender(void *arg){
 
 void *writer(void *arg){
     package new_package;
-    int try_count;
-
+    clock_t start, current;
     while(TRUE){
         memset(&new_package, 0, sizeof(new_package));
         printf("Enter destination ID: ");
@@ -121,34 +139,44 @@ void *writer(void *arg){
         scanf("%s", new_package.message);
         new_package.id_origin = self_router.id;
         new_package.ack = FALSE;
-
+        new_package.seq_num = seq_num;
         if(!sem_trywait(&to_send_buffer_empty)){
             pthread_mutex_lock(&to_send_buffer_mutex);
 
+            pthread_mutex_lock(&ack_mutex);
+            ack = TRUE;
+            pthread_mutex_unlock(&ack_mutex);
+
             to_send_buffer[to_send_buffer_rear] = new_package;
             to_send_buffer_rear = (to_send_buffer_rear + 1) % TO_SEND_BUFFER_LEN;
-
             pthread_mutex_unlock(&to_send_buffer_mutex);
             sem_post(&to_send_buffer_full);
 
-            ack = TRUE;
 
-            try_count = 1;
-
-
-
+            start = clock();
+            while( (clock()/CLOCKS_PER_SEC) < ((start/CLOCKS_PER_SEC) + TIMEOUT) ){
+                pthread_mutex_lock(&ack_mutex);
+                if(ack == FALSE){
+                    pthread_mutex_unlock(&ack_mutex);
+                    printf("\nAck recebido\n");
+                    goto next;
+                }
+                pthread_mutex_unlock(&ack_mutex);
+            }
+            printf("\nTimeout alcançado, ack não recebido\n");
         }
+        next:
+        pthread_mutex_lock(&ack_mutex);
+        seq_num++;
+        pthread_mutex_unlock(&ack_mutex);
     }
-
 }
 
-int get_routers_settings(int self_id)
-{
+int get_routers_settings(int self_id){
     int  i, flag = TRUE;
     router aux;
     FILE *routers_settings = fopen("config/roteador.config", "r");
-        for(i = 0, n_routers = 0; fscanf(routers_settings,"%d %d %s", &aux.id, &aux.port, aux.ip) != EOF; i++)
-        {
+        for(i = 0, n_routers = 0; fscanf(routers_settings,"%d %d %s", &aux.id, &aux.port, aux.ip) != EOF; i++){
             routers = realloc (routers, sizeof(router) * ++(n_routers));
 
             routers[i].id = aux.id;
@@ -169,28 +197,16 @@ int get_routers_settings(int self_id)
     return(0);
 }
 
-
-
 int main(int argc, char *argv[]){
-
     if(argc != 2){
         printf("[ERROR] %d arguments provided, expectating 1.\n", argc-1);
         exit(1);
     }
     int self_id = atoi(argv[1]);
 
-
-
-
-
-
     get_routers_settings(self_id);
     routing_table = realloc(routing_table, sizeof(routing_row)*(n_routers-1));
     create_routing_table(self_id, n_routers);
-
-
-
-
 
     if ( (mysocket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
@@ -202,19 +218,10 @@ int main(int argc, char *argv[]){
     si_me.sin_port = htons(self_router.port);
     si_me.sin_addr.s_addr = htonl(INADDR_ANY);
 
-
-
-
-
-
-    ack = 'F';
     to_send_buffer_rear = 0;
     // inicia semafaros
     sem_init(&to_send_buffer_full, 0 , 0);
     sem_init(&to_send_buffer_empty, 0, TO_SEND_BUFFER_LEN);
-
-
-
 
     // inicia threads
     pthread_t Receiver, Sender, Writer;
