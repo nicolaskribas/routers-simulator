@@ -26,8 +26,8 @@ void *receiver(void *arg){
     package received_package;
 
     if(bind(mysocket, (struct sockaddr*)&si_me, sizeof(si_me)) == -1){
-        printf("[ERROR] receiver socket binding\n");
-        // exit(1);
+        printf("[ERROR] bind()\n");
+        exit(1);
     }
 
     while(1){
@@ -35,11 +35,11 @@ void *receiver(void *arg){
         memset(&received_package, 0, sizeof(received_package));
         if ((recv_len = recvfrom(mysocket, &received_package, sizeof(received_package), 0, (struct sockaddr *) &si_other, &socketlen)) == -1)
         {
-            printf("[ERROR] receiving message\n");
-            // exit(1);
+            printf("[ERROR] recvfrom()\n");
+            exit(1);
         }
         if(received_package.id_destination != self_router.id){
-            printf("\nPacote passando %d -> %d\n", received_package.id_origin, received_package.id_destination);
+            printf("Routing package %d from %d to %d\n", received_package.seq_num, received_package.id_origin, received_package.id_destination);
             if(!sem_trywait(&to_send_buffer_empty)){
                 pthread_mutex_lock(&to_send_buffer_mutex);
 
@@ -59,7 +59,7 @@ void *receiver(void *arg){
             }
             pthread_mutex_unlock(&ack_mutex);
         }else{
-            printf("\nNova mensagem de %d: %s\n", received_package.id_origin, received_package.message);
+            printf("New message from %d: %s", received_package.id_origin, received_package.message);
             received_package.ack = TRUE;
             swap = received_package.id_destination;
             received_package.id_destination = received_package.id_origin;
@@ -102,12 +102,13 @@ void send_package(package to_send_package){
 
     if (inet_aton(routers[j].ip, &si_other.sin_addr) == 0) // AQUI VAI O IP DE ACORDO COM O DIKSTRA
     {
-        printf("inet_aton() failed\n");
-        printf("Deu probllema\n");
+        printf("[ERROR] inet_aton()\n");
+        exit(1);
     }
 
     if (sendto(mysocket, &to_send_package, sizeof(to_send_package) , 0 , (struct sockaddr *) &si_other, slen)==-1){
-        printf("Deu probrema\n");
+        printf("[ERROR] sento()\n");
+        exit(1);
     }
 }
 
@@ -132,17 +133,15 @@ void *sender(void *arg){
 void *writer(void *arg){
     package new_package;
     clock_t start, current;
+    printf("To send a new message enter the ID of the destination followed by the message with up to %d caracteres\nLike this: '2 Hello router number 2!'\n", MESSAGE_LEN);
     while(TRUE){
         memset(&new_package, 0, sizeof(new_package));
-        printf("Enter destination ID: ");
         __fpurge(stdin);
         scanf("%d", &new_package.id_destination);
         if(new_package.id_destination == self_router.id || new_package.id_destination > n_routers){
             printf("Invalid ID\n");
             continue;
         }
-        printf("Enter message: ");
-        __fpurge(stdin);
         fgets(new_package.message, MESSAGE_LEN, stdin);
         new_package.id_origin = self_router.id;
         new_package.ack = FALSE;
@@ -165,12 +164,12 @@ void *writer(void *arg){
                 pthread_mutex_lock(&ack_mutex);
                 if(ack == FALSE){
                     pthread_mutex_unlock(&ack_mutex);
-                    printf("\nAck recebido\n");
+                    printf("Ack for package %d received\n", seq_num);
                     goto next;
                 }
                 pthread_mutex_unlock(&ack_mutex);
             }
-            printf("\nTimeout alcançado, ack não recebido\n");
+            printf("Timeout reached, ack was not received\n");
         }
         next:
         pthread_mutex_lock(&ack_mutex);
@@ -217,7 +216,8 @@ int main(int argc, char *argv[]){
 
     if ( (mysocket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
-        puts("socket");
+        printf("[ERROR] socket()\n");
+        exit(1);
     }
 
     memset(&si_me, 0, sizeof(si_me));
