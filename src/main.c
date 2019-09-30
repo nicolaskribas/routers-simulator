@@ -135,6 +135,7 @@ void *sender(void *arg){
 
 void *writer(void *arg){
     package new_package;
+    char c;
     clock_t start, current;
     printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
     while(TRUE){
@@ -145,7 +146,9 @@ void *writer(void *arg){
             printf(">>Invalid ID\n");
             continue;
         }
+        scanf("%c", &c);
         fgets(new_package.message, MESSAGE_LEN, stdin);
+        new_package.message[MESSAGE_LEN-1] = '\n';
         new_package.id_origin = self_router.id;
         new_package.ack = FALSE;
         new_package.seq_num = seq_num;
