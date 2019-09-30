@@ -1,3 +1,6 @@
+//COLOCAR \n na hora de printar a mensagem
+//tirar o espaço do começo da string
+//tirar \n do final da mensagem
 #include <settings.h>
 #include <structs.h>
 #include <semaphore.h> //sem_t
@@ -26,7 +29,7 @@ void *receiver(void *arg){
     package received_package;
 
     if(bind(mysocket, (struct sockaddr*)&si_me, sizeof(si_me)) == -1){
-        printf("[ERROR] bind()\n");
+        printf(">>[ERROR] bind()\n");
         exit(1);
     }
 
@@ -35,11 +38,11 @@ void *receiver(void *arg){
         memset(&received_package, 0, sizeof(received_package));
         if ((recv_len = recvfrom(mysocket, &received_package, sizeof(received_package), 0, (struct sockaddr *) &si_other, &socketlen)) == -1)
         {
-            printf("[ERROR] recvfrom()\n");
+            printf(">>[ERROR] recvfrom()\n");
             exit(1);
         }
         if(received_package.id_destination != self_router.id){
-            printf("Routing package %d from %d to %d\n", received_package.seq_num, received_package.id_origin, received_package.id_destination);
+            printf(">>Routing package %d from %d to %d\n", received_package.seq_num, received_package.id_origin, received_package.id_destination);
             if(!sem_trywait(&to_send_buffer_empty)){
                 pthread_mutex_lock(&to_send_buffer_mutex);
 
@@ -50,7 +53,7 @@ void *receiver(void *arg){
 
                 sem_post(&to_send_buffer_full);
             }else{
-                printf("Package discarted\n");
+                printf(">>Package discarted\n");
             }
         }else if(received_package.ack == TRUE){
             pthread_mutex_lock(&ack_mutex);
@@ -59,7 +62,7 @@ void *receiver(void *arg){
             }
             pthread_mutex_unlock(&ack_mutex);
         }else{
-            printf("New message from %d: %s", received_package.id_origin, received_package.message);
+            printf(">>New message from %d: %s", received_package.id_origin, received_package.message);
             received_package.ack = TRUE;
             swap = received_package.id_destination;
             received_package.id_destination = received_package.id_origin;
@@ -74,7 +77,7 @@ void *receiver(void *arg){
 
                 sem_post(&to_send_buffer_full);
             }else{
-                printf("Package discarted\n");
+                printf(">>Package discarted\n");
             }
         }
     }
@@ -102,12 +105,12 @@ void send_package(package to_send_package){
 
     if (inet_aton(routers[j].ip, &si_other.sin_addr) == 0) // AQUI VAI O IP DE ACORDO COM O DIKSTRA
     {
-        printf("[ERROR] inet_aton()\n");
+        printf(">>[ERROR] inet_aton()\n");
         exit(1);
     }
 
     if (sendto(mysocket, &to_send_package, sizeof(to_send_package) , 0 , (struct sockaddr *) &si_other, slen)==-1){
-        printf("[ERROR] sento()\n");
+        printf(">>[ERROR] sento()\n");
         exit(1);
     }
 }
@@ -133,13 +136,13 @@ void *sender(void *arg){
 void *writer(void *arg){
     package new_package;
     clock_t start, current;
-    printf("To send a new message enter the ID of the destination followed by the message with up to %d caracteres\nLike this: '2 Hello router number 2!'\n", MESSAGE_LEN);
+    printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
     while(TRUE){
         memset(&new_package, 0, sizeof(new_package));
         __fpurge(stdin);
         scanf("%d", &new_package.id_destination);
         if(new_package.id_destination == self_router.id || new_package.id_destination > n_routers || new_package.id_destination<=0){
-            printf("Invalid ID\n");
+            printf(">>Invalid ID\n");
             continue;
         }
         fgets(new_package.message, MESSAGE_LEN, stdin);
@@ -164,12 +167,12 @@ void *writer(void *arg){
                 pthread_mutex_lock(&ack_mutex);
                 if(ack == FALSE){
                     pthread_mutex_unlock(&ack_mutex);
-                    printf("Ack for package %d received\n", seq_num);
+                    printf(">>Ack for package %d received\n", seq_num);
                     goto next;
                 }
                 pthread_mutex_unlock(&ack_mutex);
             }
-            printf("Timeout reached, ack was not received\n");
+            printf(">>Timeout reached, ack was not received\n");
         }
         next:
         pthread_mutex_lock(&ack_mutex);
@@ -197,7 +200,7 @@ int get_routers_settings(int self_id){
     fclose(routers_settings);
 
     if(flag){
-        printf("[ERROR] Router with ID %d not configurated.\n", self_id);
+        printf(">>[ERROR] Router with ID %d not configurated.\n", self_id);
         exit(1);
     }
     return(0);
@@ -205,7 +208,7 @@ int get_routers_settings(int self_id){
 
 int main(int argc, char *argv[]){
     if(argc != 2){
-        printf("[ERROR] %d arguments provided, expectating 1.\n", argc-1);
+        printf(">>[ERROR] %d arguments provided, expectating 1.\n", argc-1);
         exit(1);
     }
     int self_id = atoi(argv[1]);
@@ -216,7 +219,7 @@ int main(int argc, char *argv[]){
 
     if ( (mysocket=socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
     {
-        printf("[ERROR] socket()\n");
+        printf(">>[ERROR] socket()\n");
         exit(1);
     }
 
