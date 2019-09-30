@@ -45,7 +45,7 @@ int dk(int n_vertex,int id_origem,int id_destino,int matriz[n_vertex][n_vertex],
     do{
 
         aux = 1000000;
-        for(i=0;i<6;i++){
+        for(i=0;i<n_vertex;i++){
             if(abertos[i] == 0){
                 if(dist[i]<aux){
                     aux = i;
