@@ -9,6 +9,7 @@
 #include <pthread.h> //phthread_t
 #include <routing_table.h>
 #include <time.h>
+#include <stdio_ext.h>
 
 int to_send_buffer_rear, ack, seq_num = 0, mysocket, n_routers = 0;
 sem_t to_send_buffer_full, to_send_buffer_empty;    //Semafaros produtor-consumidor
@@ -134,9 +135,15 @@ void *writer(void *arg){
     while(TRUE){
         memset(&new_package, 0, sizeof(new_package));
         printf("Enter destination ID: ");
+        __fpurge(stdin);
         scanf("%d", &new_package.id_destination);
+        if(new_package.id_destination == self_router.id || new_package.id_destination > n_routers){
+            printf("Invalid ID\n");
+            continue;
+        }
         printf("Enter message: ");
-        scanf("%s", new_package.message);
+        __fpurge(stdin);
+        fgets(new_package.message, MESSAGE_LEN, stdin);
         new_package.id_origin = self_router.id;
         new_package.ack = FALSE;
         new_package.seq_num = seq_num;
