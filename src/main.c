@@ -138,7 +138,7 @@ void *writer(void *arg){
         memset(&new_package, 0, sizeof(new_package));
         __fpurge(stdin);
         scanf("%d", &new_package.id_destination);
-        if(new_package.id_destination == self_router.id || new_package.id_destination > n_routers){
+        if(new_package.id_destination == self_router.id || new_package.id_destination > n_routers || new_package.id_destination<=0){
             printf("Invalid ID\n");
             continue;
         }
