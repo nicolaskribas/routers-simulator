@@ -1,6 +1,3 @@
-//COLOCAR \n na hora de printar a mensagem
-//tirar o espaço do começo da string
-//tirar \n do final da mensagem
 #include <settings.h>
 #include <structs.h>
 #include <semaphore.h> //sem_t

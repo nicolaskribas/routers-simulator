@@ -69,20 +69,6 @@ int dk(int n_vertex,int id_origem,int id_destino,int matriz[n_vertex][n_vertex],
         }
         contador++;
     }while(contador < n_vertex);
- //    for(i=0;i<6;i++){
-	// 	printf("d%d: %d\t",i,dist[i]);
-	// }
-	// printf("\n");
-	// for(i=0;i<6;i++){
-	// 	printf("Vertice anterior %d: %d\t",i,anterior[i]);
-	// }
-	// printf("\n");
-	// printf("Melhor caminho: 5/");
-	// int a=5;
-	// while(a!=0){
- //        printf("%d/",anterior[a]);
- //        a=anterior[a];
- //    }
 	int a=n_vertex-1,last;
 
     if(id_origem == n_vertex && id_destino ==1){
@@ -103,9 +89,6 @@ int dk(int n_vertex,int id_origem,int id_destino,int matriz[n_vertex][n_vertex],
     routing_table[next].id_destination = id_destino;
     routing_table[next].id_next = last + 1;
     routing_table[next].cost = dist[n_vertex-1];
-    // tabela.vertex = id_destino
-    // tabela.distancia = dist[n_vertex-1]
-    // tabela.caminho = last + 1;
 }
 
 void create_routing_table(int id, int n_vertex){
