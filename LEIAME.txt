@@ -1,0 +1,15 @@
+Configurações do projeto:
+Existem dois arquivos de configuração na pasta config/;
+No arquivo roteador.config são especificados para o programa as configurações dos N roteadores, que devem ser numerados em ordem de 1 a N,
+para cada linha do arquivo temos um identificador do roteador, número da porta e número IP, separados por pelo menos um espaço em branco;
+No arquivo enlaces.config são especificados as conexões existentes entre cada roteador, para cada linha temos dois IDs e o custo da ligação.
+separados por pelo menos um espaço em branco.
+----------------------------------------------------------------------------------------------------------------------------------------------
+Passos para a execução do trabalho:
+1-Download do trabalho;
+2-Dentro da pasta "routers-simulator" (mesmo local deste leia-me), execute o comando "make all" para compilar o programa;
+3-Na mesma pasta "routers-simulator" execute o programa com o comando "./router.out N", onde N é o identificador do roteador que está sendo
+instanciado;
+4-Para enviar mensagens entre os roteadores digite na linha de comando o identificador do roteador destinatário seguido por um espaço em branco
+e então a mensagem que deseja enviar. Por exemplo "2 Olá roteador numero 2!".
+----------------------------------------------------------------------------------------------------------------------------------------------
