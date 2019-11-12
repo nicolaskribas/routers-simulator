@@ -2,17 +2,17 @@
 // #define STRUCTS_H
 #include <settings.h>
 
-typedef struct router{
+typedef struct router {
     int id;
     int port;
     char ip[15];
-}router;
+} router;
 
-typedef struct routing_row{
+typedef struct routing_row {
     int id_destination;
     int id_next;
     int cost;
-}routing_row;
+} routing_row;
 
 // type 0 message packet
 typedef struct message_packet {

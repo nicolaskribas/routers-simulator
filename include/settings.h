@@ -2,9 +2,8 @@
 #define STRUCTS_H
 
 // Routers settings
-#define TO_SEND_BUFFER_LEN 2
 #define MESSAGE_LEN 100
-#define TIMEOUT 1
-// Router settings
-
+#define TO_ROUTE_BUF_LEN 5
+#define TO_SEND_BUF_LEN 5
+#define MAX_LEN 500
 #endif
