@@ -10,53 +10,98 @@
 router *routers = NULL; // ip/port of all the routers
 router self_router;     // ip/port of instanced router
 int sock;               // socket used in the instanced router
+int current_seq_num = 0;
 
-
-pthread_mutex_t to_route_buf_mutex;
-sem_t to_route_buf_full;
-sem_t to_route_buf_empty;
-message_packet to_route_buf[TO_ROUTE_BUF_LEN];  // buffer to store messages that need to be routed
-int to_route_buf_rear = 0;
+pthread_mutex_t ack_mutex;
 
 pthread_mutex_t to_send_buf_mutex;
 sem_t to_send_buf_full;
 sem_t to_send_buf_empty;
-message_packet to_send_buf[TO_SEND_BUF_LEN];
+data_packet to_send_buf[TO_SEND_BUF_LEN];
 int to_send_buf_rear = 0;
 
-static void *udp_receiver(void *arg) {
+pthread_mutex_t d_v_buf_mutex;
+sem_t d_v_buf_full;
+sem_t d_v_buf_empty;
+data_packet d_v_buf[D_V_BUF_LEN];
+int d_v_buf_rear = 0;
+
+static void *receiver(void *arg) {
     int recv_len;
     char buf[MAX_LEN];
     socklen_t addr_len;
     sockaddr_in origin_addr;
-
+    int old_origin;
     while(1) {
         if((recv_len = recvfrom(sock, buf, MAX_LEN, 0, (sockaddr *) &origin_addr, &addr_len))) {
             printf(">>[ERROR] Can't receive packet.\n");
         }
 
-        if(*(int *) buf == 2) {
-            if(!sem_trywait(&to_route_buf_empty)) {
-                pthread_mutex_lock(&to_route_buf_mutex);
+        switch(*(int *) buf){
+            case 0: // for message packets
+                if(((message_packet *)buf)->id_destination == self_router.id) {
+                    printf(">>New message from router %d: %s\n", ((message_packet *)buf)->id_origin, ((message_packet *)buf)->message);
+                    ((ack_packet *)buf)->type = 1;
+                    old_origin = ((ack_packet *)buf)->id_origin;
+                    ((ack_packet *)buf)->id_origin = ((message_packet *)buf)->id_destination;
+                    ((ack_packet *)buf)->id_destination = old_origin;
+                }
+                if(!sem_trywait(&to_send_buf_empty)) {
+                    pthread_mutex_lock(&to_send_buf_mutex);
 
-                to_route_buf[to_route_buf_rear] = *(message_packet *) buf;
-                to_route_buf_rear = (to_route_buf_rear + 1) % TO_ROUTE_BUF_LEN;
+                    to_send_buf[to_send_buf_rear] = *(data_packet *)buf;
+                    to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
 
-                pthread_mutex_unlock(&to_route_buf_mutex);
+                    pthread_mutex_unlock(&to_send_buf_mutex);
 
-                sem_post(&to_route_buf_full);
-            }else {
-                printf(">>Package discarted, the buf is full\n");
-            }
-        }else {
+                    sem_post(&to_send_buf_full);
+                }else {
+                    printf(">>Package discarted because the buffer is full\n");
+                }
+            break;
 
+            case 1: // for ack packets
+                if(((ack_packet *)buf)->id_destination == self_router.id) {
+                    if(((ack_packet *)buf)->seq_num == current_seq_num) {
+                        pthread_mutex_unlock(&ack_mutex);
+                    }
+                }else {
+                    if(!sem_trywait(&to_send_buf_empty)) {
+                        pthread_mutex_lock(&to_send_buf_mutex);
+
+                        to_send_buf[to_send_buf_rear] = *(data_packet *)buf;
+                        to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
+
+                        pthread_mutex_unlock(&to_send_buf_mutex);
+
+                        sem_post(&to_send_buf_full);
+                    }else {
+                        printf(">>Package discarted because the buffer is full\n");
+                    }
+                }
+            break;
+
+            case 2: // for distance-vector packets
+                if(!sem_trywait(&d_v_buf_empty)) {
+                    pthread_mutex_lock(&d_v_buf_mutex);
+
+                    d_v_buf[d_v_buf_rear] = *(data_packet *)buf;
+                    d_v_buf_rear = (d_v_buf_rear + 1) % D_V_BUF_LEN;
+
+                    pthread_mutex_unlock(&d_v_buf_mutex);
+
+                    sem_post(&d_v_buf_full);
+                }else {
+                    printf(">>Package discarted because the buffer is full\n");
+                }
+            break;
         }
     }
 
     return NULL;
 }
 
-static void *udp_sender(void *arg) {
+static void *sender(void *arg) {
     int to_send_buf_front = 0;
 
     while(1) {
@@ -76,14 +121,6 @@ static void *udp_sender(void *arg) {
 }
 
 static void *distance_vector(void *arg) {
-    while (1) {
-
-    }
-
-    return NULL;
-}
-
-static void *routing(void *arg) {
     while (1) {
 
     }
@@ -147,25 +184,44 @@ int main(int argc, char const *argv[]) {
     }
 
     //  initiate all semaphores
-    sem_init(&to_route_buf_full, 0 , 0);
-    sem_init(&to_route_buf_empty, 0, TO_ROUTE_BUF_LEN);
-
     sem_init(&to_send_buf_full, 0 , 0);
     sem_init(&to_send_buf_empty, 0, TO_SEND_BUF_LEN);
 
+    sem_init(&d_v_buf_full, 0 , 0);
+    sem_init(&d_v_buf_empty, 0, D_V_BUF_LEN);
+
     // create all needed threads
-    pthread_t udp_receiver_thread;
-    pthread_t udp_sender_thread;
+    pthread_t receiver_thread;
+    pthread_t sender_thread;
     pthread_t distance_vector_thread;
-    pthread_t routing_thread;
-    pthread_create(&udp_receiver_thread, NULL, udp_receiver, NULL);
-    pthread_create(&udp_sender_thread, NULL, udp_sender, NULL);
+    pthread_create(&receiver_thread, NULL, receiver, NULL);
+    pthread_create(&sender_thread, NULL, sender, NULL);
     pthread_create(&distance_vector_thread, NULL, distance_vector, NULL);
-    pthread_create(&routing_thread, NULL, routing, NULL);
 
     // terminal interface to create new messages
+    message_packet new_message;
     while(1){
+        printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
 
+        scanf("%d", &new_message.id_destination);
+        fgets(new_message.message, MESSAGE_LEN, stdin);
+        new_message.type = 0;
+        new_message.id_origin = self_router.id;
+        new_message.seq_num = current_seq_num;
+
+        if(!sem_trywait(&to_send_buf_empty)) {
+            pthread_mutex_lock(&to_send_buf_mutex);
+
+            to_send_buf[to_send_buf_rear] = *(data_packet *)(&new_message);
+            to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
+
+            pthread_mutex_unlock(&to_send_buf_mutex);
+
+            sem_post(&to_send_buf_full);
+        }else {
+            printf(">>Package discarted because the buffer is full\n");
+        }
+        // lock temporario no mutex
     }
 
     return 0;

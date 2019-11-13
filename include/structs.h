@@ -35,6 +35,7 @@ typedef struct ack_packet {
 typedef struct data_packet {
     int type;
     int id_origin;
+    int id_destination;
     int n;
     char message[MESSAGE_LEN];
 } data_packet;
