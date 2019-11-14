@@ -36,6 +36,6 @@ typedef struct data_packet {
     int type;
     int id_origin;
     int id_destination;
-    int n;
-    char message[MESSAGE_LEN];
+    int n_nbs = 0;
+    int d_v[MAX_D_V_LEN * 2];
 } data_packet;
