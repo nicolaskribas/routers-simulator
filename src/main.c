@@ -7,7 +7,9 @@
 #include <arpa/inet.h>  // IPPROTO_UDP
 #include <semaphore.h>  //
 #include <time.h>       // timespec
+
 // global variables
+int n_routers;
 router *routers = NULL; // ip/port of all the routers
 router self_router;     // ip/port of instanced router
 int sock;               // socket used in the instanced router
@@ -38,7 +40,7 @@ static void *receiver(void *arg) {
             printf(">>[ERROR] Can't receive packet.\n");
         }
 
-        switch(*(int *) buf){
+        switch(*(int *) buf) {
             case 0: // for message packets
                 if(((message_packet *)buf)->id_destination == self_router.id) {
                     printf(">>New message from router %d: %s\n", ((message_packet *)buf)->id_origin, ((message_packet *)buf)->message);
@@ -105,17 +107,59 @@ static void *receiver(void *arg) {
 static void *sender(void *arg) {
     int to_send_buf_front = 0;
 
+    data_packet to_send_packet;
+    int size;
+
+    sockaddr_in dest_addr;
+    int addr_len = sizeof(dest_addr);
+    dest_addr.sin_family = AF_INET;
+
+    int port;
+    char ip[15];
+
     while(1) {
         sem_wait(&to_send_buf_full);
         pthread_mutex_lock(&to_send_buf_mutex);
 
-        to_send_package = to_send_buf[to_send_buf_front];
+        to_send_packet = to_send_buf[to_send_buf_front];
         to_send_buf_front = (to_send_buf_front + 1) % TO_SEND_BUF_LEN;
 
         pthread_mutex_unlock(&to_send_buf_mutex);
         sem_post(&to_send_buf_empty);
 
-        // envia
+        switch(to_send_packet.type) {
+            case 0:
+                size = sizeof(message_packet);
+                break;
+            case 1:
+                size = sizeof(ack_packet);
+                break;
+            case 2:
+                size = sizeof(data_packet);
+                break;
+        }
+
+        // for (int i = 0; i < (n_routers-1); i++) {
+        //     if(to_send_packet.id_destination == routing_table[i].id_destination){
+        //         for (int j = 0; j < n_routers; j++) {
+        //             if(routing_table[i].id_next == routers[j].id){
+        //                 ip = routers[j].ip;
+        //                 port = routers[j].port;
+        //             }
+        //         }
+        //     }
+        // }
+
+        if(inet_aton(ip, &dest_addr.sin_addr)) {
+            printf(">>[ERROR] inet_aton()\n");
+        }
+        dest_addr.sin_port = htons(port);
+
+        if(sendto(sock, &to_send_packet, size, 0, (sockaddr *) &dest_addr, addr_len)) {
+            printf(">>[ERROR] Can't send packet.\n");
+        }
+
+
     }
 
     return NULL;
@@ -129,7 +173,7 @@ static void *distance_vector(void *arg) {
     return NULL;
 }
 
-int get_routers_settings(int self_id){
+int get_routers_settings(int self_id) {
     int flag = 1;
     router aux;
     FILE *routers_settings = fopen("config/roteador.config", "r");
@@ -147,21 +191,21 @@ int get_routers_settings(int self_id){
         }
     fclose(routers_settings);
 
-    if(flag){
+    if(flag) {
         return 1;
     }
 
     return 0;
 }
 
-struct timespec timespec_add(struct timespec t1, struct timespec t2){
+struct timespec timespec_add(struct timespec t1, struct timespec t2) {
     long sec = t1.tv_sec + t2.tv_sec;
     long nsec = t1.tv_nsec + t2.tv_nsec;
-    if (nsec >= 1000000000){
+    if (nsec >= 1000000000) {
         nsec -= 1000000000;
         sec += 1;
     }
-    return (struct timespec){ .tv_sec = sec, .tv_nsec = nsec};
+    return (struct timespec) { .tv_sec = sec, .tv_nsec = nsec};
 }
 
 int main(int argc, char const *argv[]) {
@@ -216,7 +260,7 @@ int main(int argc, char const *argv[]) {
     timeout.tv_sec = ACK_TOUT/1000;
     timeout.tv_nsec = (ACK_TOUT%1000)*1000000;
 
-    while(1){
+    while(1) {
         printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
 
         scanf("%d ", &new_message.id_destination);
@@ -241,7 +285,7 @@ int main(int argc, char const *argv[]) {
         // wait for ack or timeout
         clock_gettime(CLOCK_REALTIME, &abs_tout);
         abs_tout = timespec_add(abs_tout, timeout);
-        if(pthread_mutex_timedlock(&ack_mutex, &abs_tout)){
+        if(pthread_mutex_timedlock(&ack_mutex, &abs_tout)) {
             printf(">>Ack expired\n");
         }else{
             printf(">>Ack received\n");
