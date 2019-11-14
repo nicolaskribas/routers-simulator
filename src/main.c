@@ -6,6 +6,7 @@
 #include <sys/socket.h> // socket()
 #include <arpa/inet.h>  // IPPROTO_UDP
 #include <semaphore.h>  //
+#include <time.h>       // timespec
 // global variables
 router *routers = NULL; // ip/port of all the routers
 router self_router;     // ip/port of instanced router
@@ -153,6 +154,16 @@ int get_routers_settings(int self_id){
     return 0;
 }
 
+struct timespec timespec_add(struct timespec t1, struct timespec t2){
+    long sec = t1.tv_sec + t2.tv_sec;
+    long nsec = t1.tv_nsec + t2.tv_nsec;
+    if (nsec >= 1000000000){
+        nsec -= 1000000000;
+        sec += 1;
+    }
+    return (struct timespec){ .tv_sec = sec, .tv_nsec = nsec};
+}
+
 int main(int argc, char const *argv[]) {
     // get the id of the router from the parameters
     if(argc != 2) {
@@ -200,10 +211,15 @@ int main(int argc, char const *argv[]) {
 
     // terminal interface to create new messages
     message_packet new_message;
+    struct timespec abs_tout;
+    struct timespec timeout;
+    timeout.tv_sec = ACK_TOUT/1000;
+    timeout.tv_nsec = (ACK_TOUT%1000)*1000000;
+
     while(1){
         printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
 
-        scanf("%d", &new_message.id_destination);
+        scanf("%d ", &new_message.id_destination);
         fgets(new_message.message, MESSAGE_LEN, stdin);
         new_message.type = 0;
         new_message.id_origin = self_router.id;
@@ -221,7 +237,16 @@ int main(int argc, char const *argv[]) {
         }else {
             printf(">>Package discarted because the buffer is full\n");
         }
-        // lock temporario no mutex
+
+        // wait for ack or timeout
+        clock_gettime(CLOCK_REALTIME, &abs_tout);
+        abs_tout = timespec_add(abs_tout, timeout);
+        if(pthread_mutex_timedlock(&ack_mutex, &abs_tout)){
+            printf(">>Ack expired\n");
+        }else{
+            printf(">>Ack received\n");
+        }
+
     }
 
     return 0;
