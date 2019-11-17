@@ -31,12 +31,12 @@ int d_v_buf_rear = 0;
 
 static void *receiver(void *arg) {
     int recv_len;
-    char buf[MAX_LEN];
+    void *buf = malloc(sizeof(data_packet));
     socklen_t addr_len;
     sockaddr_in origin_addr;
     int old_origin;
     while(1) {
-        if((recv_len = recvfrom(sock, buf, MAX_LEN, 0, (sockaddr *) &origin_addr, &addr_len))) {
+        if((recv_len = recvfrom(sock, buf, sizeof(data_packet), 0, (sockaddr *) &origin_addr, &addr_len))) {
             printf(">>[ERROR] Can't receive packet.\n");
         }
 
@@ -166,8 +166,24 @@ static void *sender(void *arg) {
 }
 
 static void *distance_vector(void *arg) {
-    while (1) {
+    int d_v_buf_front = 0;
+    data_packet d_v_packet;
+    struct timespec abs_tout;
 
+    while (1) {
+        if(sem_timedwait(&d_v_buf_full, &abs_tout)){
+
+        }else{
+            pthread_mutex_lock(&d_v_buf_mutex);
+
+            d_v_packet = to_send_buf[d_v_buf_front];
+            d_v_buf_front = (d_v_buf_front + 1) % D_V_BUF_LEN;
+
+            pthread_mutex_unlock(&d_v_buf_mutex);
+            sem_post(&d_v_buf_empty);
+
+
+        }
     }
 
     return NULL;
@@ -198,6 +214,7 @@ int get_routers_settings(int self_id) {
     return 0;
 }
 
+// add the time of two timespec structures
 struct timespec timespec_add(struct timespec t1, struct timespec t2) {
     long sec = t1.tv_sec + t2.tv_sec;
     long nsec = t1.tv_nsec + t2.tv_nsec;

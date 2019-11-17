@@ -21,7 +21,7 @@ typedef struct message_packet {
     int id_destination;
     int seq_num;
     char message[MESSAGE_LEN];
-} message_package;
+} message_packet;
 
 // type 1 acknowledge packet
 typedef struct ack_packet {
@@ -29,7 +29,7 @@ typedef struct ack_packet {
     int id_origin;
     int id_destination;
     int seq_num;
-} ack_package;
+} ack_packet;
 
 // type 2 data packet
 typedef struct data_packet {
