@@ -7,5 +7,5 @@
 #define D_V_BUF_LEN 5
 #define MAX_D_V_LEN 100
 #define ACK_TOUT 1000       // ack timeout in millisconds
-
+#define INF 1000000000
 #endif

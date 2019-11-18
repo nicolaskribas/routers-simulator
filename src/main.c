@@ -10,6 +10,7 @@
 
 // global variables
 int n_routers;
+routing_row *routing_table = NULL;
 router *routers = NULL; // ip/port of all the routers
 router self_router;     // ip/port of instanced router
 int sock;               // socket used in the instanced router
@@ -33,10 +34,10 @@ static void *receiver(void *arg) {
     int recv_len;
     void *buf = malloc(sizeof(data_packet));
     socklen_t addr_len;
-    sockaddr_in origin_addr;
+    struct sockaddr_in origin_addr;
     int old_origin;
     while(1) {
-        if((recv_len = recvfrom(sock, buf, sizeof(data_packet), 0, (sockaddr *) &origin_addr, &addr_len))) {
+        if((recv_len = recvfrom(sock, buf, sizeof(data_packet), 0, (struct sockaddr *) &origin_addr, &addr_len))) {
             printf(">>[ERROR] Can't receive packet.\n");
         }
 
@@ -110,7 +111,7 @@ static void *sender(void *arg) {
     data_packet to_send_packet;
     int size;
 
-    sockaddr_in dest_addr;
+    struct sockaddr_in dest_addr;
     int addr_len = sizeof(dest_addr);
     dest_addr.sin_family = AF_INET;
 
@@ -155,7 +156,7 @@ static void *sender(void *arg) {
         }
         dest_addr.sin_port = htons(port);
 
-        if(sendto(sock, &to_send_packet, size, 0, (sockaddr *) &dest_addr, addr_len)) {
+        if(sendto(sock, &to_send_packet, size, 0, (struct sockaddr *) &dest_addr, addr_len)) {
             printf(">>[ERROR] Can't send packet.\n");
         }
 
@@ -165,10 +166,40 @@ static void *sender(void *arg) {
     return NULL;
 }
 
+void get_neighbors(int **neighbors, int *n_neighbors, int distance_matrix[][n_routers]) {
+    int router_a, router_b, cost;
+    for (size_t i = 0; i < n_routers; i++) {
+        for (size_t j = 0; j < n_routers; j++) {
+            distance_matrix[i][j] = -1;
+        }
+    }
+    FILE *links_settings = fopen("config/enlaces.config", "r");
+        for(size_t i = 0; fscanf(links_settings,"%d %d %d", &router_a, &router_b, &cost) != EOF; i++) {
+            if(router_a == self_router.id){
+                *neighbors = (int *) realloc(*neighbors, sizeof(int) * ++(*n_neighbors));
+                (*neighbors)[*n_neighbors-1] = router_b;
+                distance_matrix[router_b-1][router_b-1] = cost;
+            }else if(router_b == self_router.id){
+                *neighbors = (int *) realloc(*neighbors, sizeof(int) * ++(*n_neighbors));
+                (*neighbors)[*n_neighbors-1] = router_a;
+                distance_matrix[router_a-1][router_a-1] = cost;
+            }
+        }
+    fclose(links_settings);
+}
+
 static void *distance_vector(void *arg) {
+    int min;
+    int min_index;
     int d_v_buf_front = 0;
+    int *neighbors = NULL;
+    int n_neighbors = 0;
+    int distance_matrix[n_routers][n_routers];
+    int self_distance_vector[n_routers];
     data_packet d_v_packet;
     struct timespec abs_tout;
+    routing_table = (routing_row *) realloc(routing_table, sizeof(routing_row)*n_routers);
+    get_neighbors(&neighbors, &n_neighbors, distance_matrix);
 
     while (1) {
         if(sem_timedwait(&d_v_buf_full, &abs_tout)){
@@ -182,7 +213,25 @@ static void *distance_vector(void *arg) {
             pthread_mutex_unlock(&d_v_buf_mutex);
             sem_post(&d_v_buf_empty);
 
-
+            for (size_t i = 0; i < n_routers; i++) {
+                distance_matrix[i][d_v_packet.id_origin-1] = d_v_packet.d_v[i];
+            }
+            for (size_t i = 0; i < n_routers; i++) {
+                min = -1;
+                min_index = -1;
+                for (size_t j = 0; j < n_routers; j++) {
+                    if(min == -1 && distance_matrix[i][j] != -1) {
+                        min = distance_matrix[i][j];
+                        min_index = j;
+                    }else if(distance_matrix[i][j] < min && distance_matrix[i][j] != -1) {
+                        min = distance_matrix[i][j];
+                        min_index = j;
+                    }
+                }
+                self_distance_vector[i] = min;
+                routing_table[i].id_next = min_index;
+                routing_table[i].cost = min;
+            }
         }
     }
 
@@ -246,11 +295,11 @@ int main(int argc, char const *argv[]) {
     }
 
     // bind socket
-    sockaddr_in addr;
+    struct sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(self_router.port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    if(bind(sock, (sockaddr *) &addr, sizeof(addr))) {
+    if(bind(sock, (struct sockaddr *) &addr, sizeof(addr))) {
         printf(">>[ERROR] Can't bind socket.\n");
         return 1;
     }
