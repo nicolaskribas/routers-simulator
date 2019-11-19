@@ -7,6 +7,7 @@
 #include <arpa/inet.h>  // IPPROTO_UDP
 #include <semaphore.h>  //
 #include <time.h>       // timespec
+#include <string.h>     // memcpy
 
 // global variables
 int n_routers;
@@ -15,6 +16,9 @@ router *routers = NULL; // ip/port of all the routers
 router self_router;     // ip/port of instanced router
 int sock;               // socket used in the instanced router
 int current_seq_num = 0;
+
+pthread_mutex_t self_d_v_mutex;
+int *self_distance_vector[2];
 
 pthread_mutex_t ack_mutex;
 
@@ -29,6 +33,7 @@ sem_t d_v_buf_full;
 sem_t d_v_buf_empty;
 data_packet d_v_buf[D_V_BUF_LEN];
 int d_v_buf_rear = 0;
+
 
 static void *receiver(void *arg) {
     int recv_len;
@@ -106,6 +111,7 @@ static void *receiver(void *arg) {
 }
 
 static void *sender(void *arg) {
+    router next_router;
     int to_send_buf_front = 0;
 
     data_packet to_send_packet;
@@ -140,16 +146,9 @@ static void *sender(void *arg) {
                 break;
         }
 
-        // for (int i = 0; i < (n_routers-1); i++) {
-        //     if(to_send_packet.id_destination == routing_table[i].id_destination){
-        //         for (int j = 0; j < n_routers; j++) {
-        //             if(routing_table[i].id_next == routers[j].id){
-        //                 ip = routers[j].ip;
-        //                 port = routers[j].port;
-        //             }
-        //         }
-        //     }
-        // }
+        next_router = routers[self_distance_vector[1][to_send_packet.id_destination-1]];
+        strcpy(ip, next_router.ip);
+        port = next_router.port;
 
         if(inet_aton(ip, &dest_addr.sin_addr)) {
             printf(">>[ERROR] inet_aton()\n");
@@ -168,11 +167,11 @@ static void *sender(void *arg) {
 
 void get_neighbors(int **neighbors, int *n_neighbors, int distance_matrix[][n_routers]) {
     int router_a, router_b, cost;
+
     for (size_t i = 0; i < n_routers; i++) {
-        for (size_t j = 0; j < n_routers; j++) {
-            distance_matrix[i][j] = -1;
-        }
+        memset(distance_matrix[i], -1, sizeof(int)*n_routers);
     }
+
     FILE *links_settings = fopen("config/enlaces.config", "r");
         for(size_t i = 0; fscanf(links_settings,"%d %d %d", &router_a, &router_b, &cost) != EOF; i++) {
             if(router_a == self_router.id){
@@ -188,17 +187,44 @@ void get_neighbors(int **neighbors, int *n_neighbors, int distance_matrix[][n_ro
     fclose(links_settings);
 }
 
+int recalculate_did_change(int self_distance_vector[][n_routers], int distance_matrix[][n_routers]){
+    int min_cost;
+    int next_hop;
+    int changed = 0;
+    for (size_t j = 0; j < n_routers; j++) {
+        min_cost = -1;
+        next_hop = -1;
+        for (size_t i = 0; i < n_routers; i++) {
+            if(min_cost == -1 && distance_matrix[i][j] != -1) {
+                min_cost = distance_matrix[i][j];
+                next_hop = i;
+            }else if(distance_matrix[i][j] < min_cost && distance_matrix[i][j] != -1) {
+                min_cost = distance_matrix[i][j];
+                next_hop = i;
+            }
+        }
+        pthread_mutex_lock(&self_d_v_mutex);
+        if(min_cost != self_distance_vector[0][j]){
+
+            self_distance_vector[0][j] = min_cost;
+            self_distance_vector[1][j] = next_hop;
+            changed = 1;
+            pthread_mutex_unlock(&self_d_v_mutex);
+        }else{
+            pthread_mutex_unlock(&self_d_v_mutex);
+        }
+    }
+    return changed;
+}
+
 static void *distance_vector(void *arg) {
-    int min;
-    int min_index;
     int d_v_buf_front = 0;
     int *neighbors = NULL;
     int n_neighbors = 0;
     int distance_matrix[n_routers][n_routers];
-    int self_distance_vector[n_routers];
     data_packet d_v_packet;
     struct timespec abs_tout;
-    routing_table = (routing_row *) realloc(routing_table, sizeof(routing_row)*n_routers);
+
     get_neighbors(&neighbors, &n_neighbors, distance_matrix);
 
     while (1) {
@@ -213,24 +239,27 @@ static void *distance_vector(void *arg) {
             pthread_mutex_unlock(&d_v_buf_mutex);
             sem_post(&d_v_buf_empty);
 
-            for (size_t i = 0; i < n_routers; i++) {
-                distance_matrix[i][d_v_packet.id_origin-1] = d_v_packet.d_v[i];
-            }
-            for (size_t i = 0; i < n_routers; i++) {
-                min = -1;
-                min_index = -1;
-                for (size_t j = 0; j < n_routers; j++) {
-                    if(min == -1 && distance_matrix[i][j] != -1) {
-                        min = distance_matrix[i][j];
-                        min_index = j;
-                    }else if(distance_matrix[i][j] < min && distance_matrix[i][j] != -1) {
-                        min = distance_matrix[i][j];
-                        min_index = j;
+            memcpy(distance_matrix[d_v_packet.id_origin-1], d_v_packet.d_v, sizeof(int)*n_routers);
+
+            if(recalculate_did_change(self_distance_vector, distance_matrix)){
+                d_v_packet.type = 2;
+                d_v_packet.id_origin = self_router.id;
+                memcpy(d_v_packet.d_v, self_distance_vector[0], sizeof(int)*n_routers);
+                for (size_t i = 0; i < n_neighbors; i++) {
+                    d_v_packet.id_destination = neighbors[i];
+                    if(!sem_trywait(&to_send_buf_empty)) {
+                        pthread_mutex_lock(&to_send_buf_mutex);
+
+                        to_send_buf[to_send_buf_rear] = d_v_packet;
+                        to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
+
+                        pthread_mutex_unlock(&to_send_buf_mutex);
+
+                        sem_post(&to_send_buf_full);
+                    }else{
+                        printf("Descartado\n");
                     }
                 }
-                self_distance_vector[i] = min;
-                routing_table[i].id_next = min_index;
-                routing_table[i].cost = min;
             }
         }
     }
@@ -304,6 +333,11 @@ int main(int argc, char const *argv[]) {
         return 1;
     }
 
+    //
+    self_distance_vector[0] = malloc(sizeof(int)*n_routers);
+    memset(self_distance_vector[0], -1, sizeof(int)*n_routers);
+    self_distance_vector[1] = malloc(sizeof(int)*n_routers);
+    memset(self_distance_vector[1], -1, sizeof(int)*n_routers);
     //  initiate all semaphores
     sem_init(&to_send_buf_full, 0 , 0);
     sem_init(&to_send_buf_empty, 0, TO_SEND_BUF_LEN);
