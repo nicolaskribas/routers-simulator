@@ -158,58 +158,7 @@ static void *sender(void *arg) {
 
     return NULL;
 }
-//
-// void get_neighbors(int **neighbors, int *n_neighbors, int distance_matrix[][n_routers]) {
-//     int router_a, router_b, cost;
-//
-//     for (size_t i = 0; i < n_routers; i++) {
-//         memset(distance_matrix[i], -1, sizeof(int)*n_routers);
-//     }
-//
-//     FILE *links_settings = fopen("config/enlaces.config", "r");
-//         for(size_t i = 0; fscanf(links_settings,"%d %d %d", &router_a, &router_b, &cost) != EOF; i++) {
-//             if(router_a == self_router.id){
-//                 *neighbors = (int *) realloc(*neighbors, sizeof(int) * ++(*n_neighbors));
-//                 (*neighbors)[*n_neighbors-1] = router_b;
-//                 distance_matrix[router_b-1][router_b-1] = cost;
-//             }else if(router_b == self_router.id){
-//                 *neighbors = (int *) realloc(*neighbors, sizeof(int) * ++(*n_neighbors));
-//                 (*neighbors)[*n_neighbors-1] = router_a;
-//                 distance_matrix[router_a-1][router_a-1] = cost;
-//             }
-//         }
-//     fclose(links_settings);
-// }
 
-// int recalculate_did_change(int self_distance_vector[][n_routers], int distance_matrix[][n_routers]){
-//     int min_cost;
-//     int next_hop;
-//     int changed = 0;
-//     for (size_t j = 0; j < n_routers; j++) {
-//         min_cost = -1;
-//         next_hop = -1;
-//         for (size_t i = 0; i < n_routers; i++) {
-//             if(min_cost == -1 && distance_matrix[i][j] != -1) {
-//                 min_cost = distance_matrix[i][j];
-//                 next_hop = i;
-//             }else if(distance_matrix[i][j] < min_cost && distance_matrix[i][j] != -1) {
-//                 min_cost = distance_matrix[i][j];
-//                 next_hop = i;
-//             }
-//         }
-//         pthread_mutex_lock(&self_d_v_mutex);
-//         if(min_cost != self_distance_vector[0][j]){
-//
-//             self_distance_vector[0][j] = min_cost;
-//             self_distance_vector[1][j] = next_hop;
-//             changed = 1;
-//             pthread_mutex_unlock(&self_d_v_mutex);
-//         }else{
-//             pthread_mutex_unlock(&self_d_v_mutex);
-//         }
-//     }
-//     return changed;
-// }
 
 router *get_neighbor_by_id(int id){
     for (size_t i = 0; i < n_neighbors; i++) {
@@ -221,9 +170,14 @@ router *get_neighbor_by_id(int id){
 
 int recalculate_self_d_v(){
     int changed = 0;
-    for (size_t i = 0; i < n_neighbors; i++) {
-        for (size_t j = 0; j < n_routers; j++) {
-
+    int min;
+    int cost;
+    for (size_t to = 0; to < n_neighbors; to++) {
+        min = -1;
+        for (size_t via = 0; via < n_routers; via++) {
+            if(to == via) cost = neighbors[via].last_d_v[to];
+            else cost = neighbors[via].last_d_v[to] + neighbors[via].cost;
+            // if(min == -1 && )
         }
     }
     return changed;
