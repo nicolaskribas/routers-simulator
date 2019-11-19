@@ -9,9 +9,9 @@
 #include <time.h>       // timespec
 #include <string.h>     // memcpy
 
-#define MESSAGE 0
-#define ACK 1
-#define D_V 2
+#define MSG_TYPE 0
+#define ACK_TYPE 1
+#define D_V_TYPE 2
 
 // global variables
 
@@ -55,10 +55,10 @@ static void *receiver(void *arg) {
         }
 
         switch(buf.type) {
-            case MESSAGE: // for message packets
+            case MSG_TYPE: // for message packets
                 if(buf.id_destination == self_router.id) {
                     printf(">>New message from router %d: %s\n", buf.id_origin, (buf.content)+sizeof(int));
-                    buf.type = ACK;
+                    buf.type = ACK_TYPE;
                     old_origin = buf.id_origin;
                     buf.id_origin = buf.id_destination;
                     buf.id_destination = old_origin;
@@ -77,7 +77,7 @@ static void *receiver(void *arg) {
                 }
             break;
 
-            case ACK: // for ack packets
+            case ACK_TYPE: // for ack packets
                 if(buf.id_destination == self_router.id) {
                     if(*(buf.content) == current_seq_num) {
                         pthread_mutex_unlock(&ack_mutex);
@@ -98,7 +98,7 @@ static void *receiver(void *arg) {
                 }
             break;
 
-            case D_V: // for distance-vector packets
+            case D_V_TYPE: // for distance-vector packets
                 if(!sem_trywait(&d_v_buf_empty)) {
                     pthread_mutex_lock(&d_v_buf_mutex);
 
@@ -221,21 +221,31 @@ router *get_neighbor_by_id(int id){
 
 int recalculate_self_d_v(){
     int changed = 0;
+    for (size_t i = 0; i < n_neighbors; i++) {
+        for (size_t j = 0; j < n_routers; j++) {
 
+        }
+    }
     return changed;
 }
 
 void send_to_neighbors(){
+    packet to_send_d_v;
+    to_send_d_v.type = D_V_TYPE;
+    to_send_d_v.id_origin = self_router.id;
+    memcpy(to_send_d_v.content, self_router.last_d_v, sizeof(int)*n_routers);
     for (size_t i = 0; i < n_neighbors; i++) {
+        to_send_d_v.id_destination = neighbors[i].id;
         if(!sem_trywait(&d_v_buf_empty)) {
             pthread_mutex_lock(&d_v_buf_mutex);
 
-            d_v_buf[d_v_buf_rear] = new_message;
+            d_v_buf[d_v_buf_rear] = to_send_d_v;
             d_v_buf_rear = (d_v_buf_rear + 1) % D_V_BUF_LEN;
 
             pthread_mutex_unlock(&d_v_buf_mutex);
 
             sem_post(&d_v_buf_full);
+        }
     }
 }
 
