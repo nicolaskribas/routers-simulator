@@ -144,6 +144,8 @@ static void *sender(void *arg) {
 
         if(to_send_packet.type == D_V_TYPE){
             next_router = get_neighbor_by_id(to_send_packet.id_destination);
+        }else{
+            next_router = get_neighbor_by_id(to_send_packet.id_destination);
         }
         port = next_router->port;
         strcpy(ip, next_router->ip);
@@ -356,7 +358,7 @@ static void *writer_thread(void *args) {
         fgets(new_message.content+sizeof(int), MESSAGE_LEN, stdin);
         new_message.type = MSG_TYPE;
         new_message.id_origin = self_router.id;
-        *new_message.content = current_seq_num;
+        *new_message.content = ++current_seq_num;
 
         if(!sem_trywait(&to_send_buf_empty)) {
             pthread_mutex_lock(&to_send_buf_mutex);
@@ -418,7 +420,7 @@ int main(int argc, char const *argv[]) {
 
     sem_init(&d_v_buf_full, 0 , 0);
     sem_init(&d_v_buf_empty, 0, D_V_BUF_LEN);
-
+    pthread_mutex_lock(&ack_mutex);
     // create all needed threads
     pthread_t receiver_thread;
     pthread_t sender_thread;
