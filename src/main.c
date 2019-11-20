@@ -26,7 +26,7 @@ struct timespec resend_tout;
 struct timespec receive_tout;
 
 
-routing_row routing_table[N_MAX_ROUTERS];
+int next_hop[N_MAX_ROUTERS];
 
 router self_router;     // ip/port of instanced router
 int sock;               // socket used in the instanced router
@@ -61,7 +61,6 @@ static void *receiver(void *arg) {
         if((recv_len = recvfrom(sock, &buf, sizeof(packet), 0, (struct sockaddr *) &origin_addr, &addr_len)) == -1) {
             printf(">>[ERROR] Can't receive packet.\n");
         }
-        printf("{NOVO PACOTE SENDER}\n");
 
         switch(buf.type) {
             case MSG_TYPE: // for message packets
@@ -71,6 +70,8 @@ static void *receiver(void *arg) {
                     old_origin = buf.id_origin;
                     buf.id_origin = buf.id_destination;
                     buf.id_destination = old_origin;
+                }else{
+                    printf(">>Routing packet from %d to %d\n", buf.id_origin, buf.id_destination);
                 }
                 if(!sem_trywait(&to_send_buf_empty)) {
                     pthread_mutex_lock(&to_send_buf_mutex);
@@ -82,7 +83,7 @@ static void *receiver(void *arg) {
 
                     sem_post(&to_send_buf_full);
                 }else {
-                    printf(">>Package discarted because the buffer is full\n");
+                    printf(">>Package discarted because the sender buffer is full\n");
                 }
             break;
 
@@ -92,6 +93,7 @@ static void *receiver(void *arg) {
                         pthread_mutex_unlock(&ack_mutex);
                     }
                 }else {
+                    printf(">>Routing ack packet from %d to %d\n", buf.id_origin, buf.id_destination);
                     if(!sem_trywait(&to_send_buf_empty)) {
                         pthread_mutex_lock(&to_send_buf_mutex);
 
@@ -102,7 +104,7 @@ static void *receiver(void *arg) {
 
                         sem_post(&to_send_buf_full);
                     }else {
-                        printf(">>Package discarted because the buffer is full\n");
+                        printf(">>Package discarted because the sender buffer is full\n");
                     }
                 }
             break;
@@ -118,7 +120,7 @@ static void *receiver(void *arg) {
 
                     sem_post(&d_v_buf_full);
                 }else {
-                    printf(">>Package discarted because the buffer is full\n");
+                    printf(">>Package discarted because the d-v buffer is full\n");
                 }
             break;
         }
@@ -127,14 +129,14 @@ static void *receiver(void *arg) {
     return NULL;
 }
 
-int get_next(int id){
-    for (size_t i = 0; i < n_routers; i++) {
-        if(routing_table[i].id_destination == id){
-            return routing_table[i].id_next;
-        }
-    }
-    return -1;
-}
+// int get_next(int id){
+//     for (size_t i = 0; i < n_routers; i++) {
+//         if(routing_table[i].id_destination == id){
+//             return routing_table[i].id_next;
+//         }
+//     }
+//     return -1;
+// }
 
 static void *sender(void *arg) {
     int to_send_buf_front = 0;
@@ -150,7 +152,6 @@ static void *sender(void *arg) {
 
     while(1) {
         sem_wait(&to_send_buf_full);
-        printf("{NOVO PACOTE SENDER}\n");
         pthread_mutex_lock(&to_send_buf_mutex);
 
         to_send_packet = to_send_buf[to_send_buf_front];
@@ -162,15 +163,11 @@ static void *sender(void *arg) {
         if(to_send_packet.type == D_V_TYPE){
             next_router = get_neighbor_by_id(to_send_packet.id_destination);
         }else{
-            printf("NEXT: %d", get_next(to_send_packet.id_destination));
-            next_router = get_neighbor_by_id(get_next(to_send_packet.id_destination));
+            next_router = get_neighbor_by_id(next_hop[to_send_packet.id_destination-1]);
         }
         if(next_router == NULL) continue;
         port = next_router->port;
         strcpy(ip, next_router->ip);
-        // next_router = routers[self_distance_vector[1][to_send_packet.id_destination-1]];
-        // strcpy(ip, next_router.ip);
-        // port = next_router.port;
 
         if(!inet_aton(ip, &dest_addr.sin_addr)) {
             printf(">>[ERROR] inet_aton()\n");
@@ -190,8 +187,6 @@ static void *sender(void *arg) {
 
 router *get_neighbor_by_id(int id){
     for (size_t i = 0; i < n_neighbors; i++) {
-        printf("NEI:");
-        printf(" %d", neighbors[i].id);
         if(neighbors[i].id == id){
             return &neighbors[i];
         }
@@ -199,8 +194,9 @@ router *get_neighbor_by_id(int id){
     return NULL;
 }
 
-void printa_d_v(){
-    printf("\nID %d:", self_router.id);
+void print_d_v(){
+    printf("\n\n>> Distance-vector changed:\n");
+    printf("ID %d:", self_router.id);
     for (size_t j = 0; j < n_routers; j++) {
         printf(" %d", self_router.last_d_v[j]);
     }
@@ -210,6 +206,11 @@ void printa_d_v(){
             printf(" %d", neighbors[i].last_d_v[j]);
         }
     }
+    printf("\nPROXIMOS SALTOS: ");
+    for (size_t i = 0; i < n_routers; i++) {
+        printf(" %d", next_hop[i]);
+    }
+    printf("\n");
 }
 
 void recalculate_self_d_v(void){
@@ -229,19 +230,19 @@ void recalculate_self_d_v(void){
         }
         if(min > MAX_COST){
             self_router.last_d_v[to] = -1;
-            routing_table[to].id_next = -1;
+            next_hop[to] = -1;
             changed = 1;
         }else if(min != self_router.last_d_v[to]){
             self_router.last_d_v[to] = min;
-            routing_table[to].id_next = min_index+1;
+            next_hop[to] = neighbors[min_index].id;
             changed = 1;
         }else if(min == self_router.last_d_v[to]){
-            routing_table[to].id_next = min_index+1;
+            next_hop[to] = neighbors[min_index].id;
         }
 
     }
-    printa_d_v();
     if(changed){
+        print_d_v();
         send_to_neighbors();
     }
 }
@@ -265,7 +266,7 @@ void send_to_neighbors(void){
 
             sem_post(&to_send_buf_full);
         }else{
-            printf("{DISCARTADO NO SEND_TO_NEI}");
+            printf(">>Package discarted because the sender buffer is full\n");
         }
     }
 }
@@ -309,14 +310,13 @@ static void *distance_vector(void *arg) {
     packet d_v_packet;
     router *neighbor_router;
     struct timespec next_tout;
-    printa_d_v();
+    print_d_v();
     send_to_neighbors();
     next_tout = check_tout();
     while (1) {
         if(sem_timedwait(&d_v_buf_full, &next_tout)){
             next_tout = check_tout();
         }else{
-            printf("debug distance_vector\n");
             pthread_mutex_lock(&d_v_buf_mutex);
 
             d_v_packet = d_v_buf[d_v_buf_front];
@@ -348,8 +348,9 @@ void new_neighbor(int neighbor_id, int neighbor_cost){
 
     self_router.last_d_v[neighbor_id-1] = neighbor_cost;
 
-    routing_table[neighbor_id-1].id_next = neighbor_id;
-    routing_table[neighbor_id-1].cost = neighbor_cost;
+    next_hop[neighbor_id-1] = neighbor_id;
+    // routing_table[neighbor_id-1].id_next = neighbor_id;
+    // routing_table[neighbor_id-1].cost = neighbor_cost;
 
     n_neighbors++;
 }
@@ -422,10 +423,8 @@ static void *writer_thread(void *args) {
     struct timespec timeout;
     timeout.tv_sec = ACK_TOUT/1000;
     timeout.tv_nsec = (ACK_TOUT%1000)*1000000;
-
+    printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
     while(1) {
-        printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
-
         scanf("%d ", &new_message.id_destination);
         fgets(new_message.content+sizeof(int), MESSAGE_LEN, stdin);
         new_message.type = MSG_TYPE;
@@ -442,7 +441,7 @@ static void *writer_thread(void *args) {
 
             sem_post(&to_send_buf_full);
         }else {
-            printf(">>Package discarted because the buffer is full\n");
+            printf(">>Package discarted because the sender buffer is full\n");
         }
 
         // wait for ack or timeout
@@ -471,9 +470,10 @@ int main(int argc, char const *argv[]) {
         printf(">>[ERROR] Router with ID %d not configurated.\n", self_id);
         return 1;
     }
-    for (size_t i = 0; i < n_routers; i++) {
-        routing_table[i].id_destination = i+1;
-    }
+    // for (size_t i = 0; i < n_routers; i++) {
+    //     routing_table[i].id_destination = i+1;
+    // }
+    memset(&next_hop, -1, sizeof(int) * N_MAX_ROUTERS);
     // create a socket
     if((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
         printf(">>[ERROR] Can't create a socket.\n");
