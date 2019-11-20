@@ -16,6 +16,8 @@
 
 // functions
 router *get_neighbor_by_id(int id);
+void send_to_neighbors(void);
+struct timespec timespec_add(struct timespec t1, struct timespec t2);
 
 
 // global variables
@@ -124,6 +126,7 @@ static void *receiver(void *arg) {
 
     return NULL;
 }
+
 int get_next(int id){
     for (size_t i = 0; i < n_routers; i++) {
         if(routing_table[i].id_destination == id){
@@ -132,6 +135,7 @@ int get_next(int id){
     }
     return -1;
 }
+
 static void *sender(void *arg) {
     int to_send_buf_front = 0;
     router *next_router;
@@ -208,7 +212,7 @@ void printa_d_v(){
     }
 }
 
-int recalculate_self_d_v(){
+void recalculate_self_d_v(void){
     int changed = 0;
     int min;
     int min_index;
@@ -223,7 +227,11 @@ int recalculate_self_d_v(){
                 min_index = via;
             }
         }
-        if(min != self_router.last_d_v[to]){
+        if(min > MAX_COST){
+            self_router.last_d_v[to] = -1;
+            routing_table[to].id_next = -1;
+            changed = 1;
+        }else if(min != self_router.last_d_v[to]){
             self_router.last_d_v[to] = min;
             routing_table[to].id_next = min_index+1;
             changed = 1;
@@ -233,15 +241,18 @@ int recalculate_self_d_v(){
 
     }
     printa_d_v();
-    return changed;
+    if(changed){
+        send_to_neighbors();
+    }
 }
 
-void send_to_neighbors(){
+void send_to_neighbors(void){
     packet to_send_d_v;
     to_send_d_v.type = D_V_TYPE;
     to_send_d_v.id_origin = self_router.id;
     memcpy(to_send_d_v.content, self_router.last_d_v, sizeof(int)*n_routers);
     clock_gettime(CLOCK_REALTIME, &self_router.d_v_time);
+    self_router.d_v_time = timespec_add(self_router.d_v_time, resend_tout);
     for (size_t i = 0; i < n_neighbors; i++) {
         to_send_d_v.id_destination = neighbors[i].id;
         if(!sem_trywait(&to_send_buf_empty)) {
@@ -259,21 +270,42 @@ void send_to_neighbors(){
     }
 }
 
+int is_smaller(struct timespec left, struct timespec right){
+    if (left.tv_sec == right.tv_sec)
+        return (left.tv_nsec < right.tv_nsec);
+    else
+        return (left.tv_sec < right.tv_sec);
+}
+
 struct timespec check_tout(void) {
     struct timespec current;
     struct timespec next_tout;
     clock_gettime(CLOCK_REALTIME, &current);
-    if(1){}
+    if(is_smaller(self_router.d_v_time, current)){
+        send_to_neighbors();
+    }
+    next_tout = self_router.d_v_time;
+    for (size_t i = 0; i < n_neighbors; i++) {
+        if(neighbors[i].available){
+            if(is_smaller(neighbors[i].d_v_time, current)){
+                neighbors[i].available = 0;
+                recalculate_self_d_v();
+            }else if(is_smaller(neighbors[i].d_v_time, next_tout)){
+                next_tout = neighbors[i].d_v_time;
+            }
+        }
+    }
+
+    return next_tout;
 }
 
 static void *distance_vector(void *arg) {
     resend_tout.tv_sec = RESEND_TOUT/1000;
     resend_tout.tv_nsec = (RESEND_TOUT%1000)*1000000;
-    resend_tout.tv_sec = (RESEND_TOUT*3)/1000;
-    resend_tout.tv_nsec = ((RESEND_TOUT*3)%1000)*1000000;
+    receive_tout.tv_sec = (RESEND_TOUT*3)/1000;
+    receive_tout.tv_nsec = ((RESEND_TOUT*3)%1000)*1000000;
 
     int d_v_buf_front = 0;
-    int changed;
     packet d_v_packet;
     router *neighbor_router;
     struct timespec next_tout;
@@ -296,12 +328,11 @@ static void *distance_vector(void *arg) {
             neighbor_router = get_neighbor_by_id(d_v_packet.id_origin);
             neighbor_router->available = 1;
             clock_gettime(CLOCK_REALTIME, &neighbor_router->d_v_time);
+            neighbor_router->d_v_time = timespec_add(neighbor_router->d_v_time, receive_tout);
             memcpy(neighbor_router->last_d_v, d_v_packet.content, N_MAX_ROUTERS*sizeof(int));
 
-            changed = recalculate_self_d_v();
-            if(changed){
-                send_to_neighbors();
-            }
+            recalculate_self_d_v();
+            next_tout = check_tout();
         }
     }
 
@@ -312,7 +343,7 @@ void new_neighbor(int neighbor_id, int neighbor_cost){
     neighbors = (router *) realloc(neighbors, sizeof(router) * (n_neighbors+1));
     neighbors[n_neighbors].id = neighbor_id;
     neighbors[n_neighbors].cost = neighbor_cost;
-    neighbors[n_neighbors].available = 1;
+    neighbors[n_neighbors].available = 0;
     memset(neighbors[n_neighbors].last_d_v, -1, sizeof(int)*N_MAX_ROUTERS);
 
     self_router.last_d_v[neighbor_id-1] = neighbor_cost;
@@ -344,7 +375,6 @@ int find_neighbor_by_id(int id){
     }
     return -1;
 }
-
 
 int get_routers_settings(int self_id) {
     memset(self_router.last_d_v, -1, sizeof(int)*N_MAX_ROUTERS);
@@ -384,6 +414,7 @@ struct timespec timespec_add(struct timespec t1, struct timespec t2) {
     }
     return (struct timespec) { .tv_sec = sec, .tv_nsec = nsec};
 }
+
 static void *writer_thread(void *args) {
     // terminal interface to create new messages
     packet new_message;
@@ -426,6 +457,7 @@ static void *writer_thread(void *args) {
     }
     return NULL;
 }
+
 int main(int argc, char const *argv[]) {
     // get the id of the router from the parameters
     if(argc != 2) {

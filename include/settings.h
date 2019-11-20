@@ -2,6 +2,7 @@
 #define STRUCTS_H
 
 // Routers settings
+#define MAX_COST 300
 #define MESSAGE_LEN 100
 #define CONTENT_MAX_LEN 500
 #define N_MAX_ROUTERS 50
