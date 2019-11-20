@@ -17,8 +17,14 @@
 // functions
 router *get_neighbor_by_id(int id);
 
+
 // global variables
-routing_row *routing_table = NULL;
+
+struct timespec resend_tout;
+struct timespec receive_tout;
+
+
+routing_row routing_table[N_MAX_ROUTERS];
 
 router self_router;     // ip/port of instanced router
 int sock;               // socket used in the instanced router
@@ -118,7 +124,14 @@ static void *receiver(void *arg) {
 
     return NULL;
 }
-
+int get_next(int id){
+    for (size_t i = 0; i < n_routers; i++) {
+        if(routing_table[i].id_destination == id){
+            return routing_table[i].id_next;
+        }
+    }
+    return -1;
+}
 static void *sender(void *arg) {
     int to_send_buf_front = 0;
     router *next_router;
@@ -145,8 +158,10 @@ static void *sender(void *arg) {
         if(to_send_packet.type == D_V_TYPE){
             next_router = get_neighbor_by_id(to_send_packet.id_destination);
         }else{
-            next_router = get_neighbor_by_id(to_send_packet.id_destination);
+            printf("NEXT: %d", get_next(to_send_packet.id_destination));
+            next_router = get_neighbor_by_id(get_next(to_send_packet.id_destination));
         }
+        if(next_router == NULL) continue;
         port = next_router->port;
         strcpy(ip, next_router->ip);
         // next_router = routers[self_distance_vector[1][to_send_packet.id_destination-1]];
@@ -171,10 +186,13 @@ static void *sender(void *arg) {
 
 router *get_neighbor_by_id(int id){
     for (size_t i = 0; i < n_neighbors; i++) {
+        printf("NEI:");
+        printf(" %d", neighbors[i].id);
         if(neighbors[i].id == id){
             return &neighbors[i];
         }
     }
+    return NULL;
 }
 
 void printa_d_v(){
@@ -193,22 +211,24 @@ void printa_d_v(){
 int recalculate_self_d_v(){
     int changed = 0;
     int min;
-    // int min_index;
+    int min_index;
     for (size_t to = 0; to < n_routers; to++) {
         if(to == self_router.id-1) continue;
         min = -1;
-        // min_index = -1;
+        min_index = -1;
         for (size_t via = 0; via < n_neighbors; via++) {
             if(!neighbors[via].available || neighbors[via].last_d_v[to] == -1) continue;
             if(min == -1 || (neighbors[via].last_d_v[to] + neighbors[via].cost) < min){
                 min = neighbors[via].last_d_v[to] + neighbors[via].cost;
-                // min_index = via;
+                min_index = via;
             }
         }
         if(min != self_router.last_d_v[to]){
-            // printa_d_v();
             self_router.last_d_v[to] = min;
+            routing_table[to].id_next = min_index+1;
             changed = 1;
+        }else if(min == self_router.last_d_v[to]){
+            routing_table[to].id_next = min_index+1;
         }
 
     }
@@ -221,6 +241,7 @@ void send_to_neighbors(){
     to_send_d_v.type = D_V_TYPE;
     to_send_d_v.id_origin = self_router.id;
     memcpy(to_send_d_v.content, self_router.last_d_v, sizeof(int)*n_routers);
+    clock_gettime(CLOCK_REALTIME, &self_router.d_v_time);
     for (size_t i = 0; i < n_neighbors; i++) {
         to_send_d_v.id_destination = neighbors[i].id;
         if(!sem_trywait(&to_send_buf_empty)) {
@@ -238,32 +259,49 @@ void send_to_neighbors(){
     }
 }
 
+struct timespec check_tout(void) {
+    struct timespec current;
+    struct timespec next_tout;
+    clock_gettime(CLOCK_REALTIME, &current);
+    if(1){}
+}
+
 static void *distance_vector(void *arg) {
+    resend_tout.tv_sec = RESEND_TOUT/1000;
+    resend_tout.tv_nsec = (RESEND_TOUT%1000)*1000000;
+    resend_tout.tv_sec = (RESEND_TOUT*3)/1000;
+    resend_tout.tv_nsec = ((RESEND_TOUT*3)%1000)*1000000;
+
     int d_v_buf_front = 0;
     int changed;
     packet d_v_packet;
     router *neighbor_router;
-    struct timespec abs_tout;
+    struct timespec next_tout;
     printa_d_v();
     send_to_neighbors();
+    next_tout = check_tout();
     while (1) {
-        sem_wait(&d_v_buf_full);
-        printf("debug distance_vector\n");
-        pthread_mutex_lock(&d_v_buf_mutex);
+        if(sem_timedwait(&d_v_buf_full, &next_tout)){
+            next_tout = check_tout();
+        }else{
+            printf("debug distance_vector\n");
+            pthread_mutex_lock(&d_v_buf_mutex);
 
-        d_v_packet = d_v_buf[d_v_buf_front];
-        d_v_buf_front = (d_v_buf_front + 1) % D_V_BUF_LEN;
+            d_v_packet = d_v_buf[d_v_buf_front];
+            d_v_buf_front = (d_v_buf_front + 1) % D_V_BUF_LEN;
 
-        pthread_mutex_unlock(&d_v_buf_mutex);
-        sem_post(&d_v_buf_empty);
+            pthread_mutex_unlock(&d_v_buf_mutex);
+            sem_post(&d_v_buf_empty);
 
-        neighbor_router = get_neighbor_by_id(d_v_packet.id_origin);
-        clock_gettime(CLOCK_REALTIME, &neighbor_router->d_v_time);
-        memcpy(neighbor_router->last_d_v, d_v_packet.content, N_MAX_ROUTERS*sizeof(int));
+            neighbor_router = get_neighbor_by_id(d_v_packet.id_origin);
+            neighbor_router->available = 1;
+            clock_gettime(CLOCK_REALTIME, &neighbor_router->d_v_time);
+            memcpy(neighbor_router->last_d_v, d_v_packet.content, N_MAX_ROUTERS*sizeof(int));
 
-        changed = recalculate_self_d_v();
-        if(changed){
-            send_to_neighbors();
+            changed = recalculate_self_d_v();
+            if(changed){
+                send_to_neighbors();
+            }
         }
     }
 
@@ -278,6 +316,9 @@ void new_neighbor(int neighbor_id, int neighbor_cost){
     memset(neighbors[n_neighbors].last_d_v, -1, sizeof(int)*N_MAX_ROUTERS);
 
     self_router.last_d_v[neighbor_id-1] = neighbor_cost;
+
+    routing_table[neighbor_id-1].id_next = neighbor_id;
+    routing_table[neighbor_id-1].cost = neighbor_cost;
 
     n_neighbors++;
 }
@@ -383,6 +424,7 @@ static void *writer_thread(void *args) {
         }
 
     }
+    return NULL;
 }
 int main(int argc, char const *argv[]) {
     // get the id of the router from the parameters
@@ -397,7 +439,9 @@ int main(int argc, char const *argv[]) {
         printf(">>[ERROR] Router with ID %d not configurated.\n", self_id);
         return 1;
     }
-
+    for (size_t i = 0; i < n_routers; i++) {
+        routing_table[i].id_destination = i+1;
+    }
     // create a socket
     if((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
         printf(">>[ERROR] Can't create a socket.\n");
