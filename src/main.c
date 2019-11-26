@@ -83,7 +83,7 @@ static void *receiver(void *arg) {
 
                     sem_post(&to_send_buf_full);
                 }else {
-                    printf(">>Package discarted because the sender buffer is full\n");
+                    printf(">>Packet discarted, sender buffer is full\n");
                 }
             break;
 
@@ -104,7 +104,7 @@ static void *receiver(void *arg) {
 
                         sem_post(&to_send_buf_full);
                     }else {
-                        printf(">>Package discarted because the sender buffer is full\n");
+                        printf(">>Packet discarted, sender buffer is full\n");
                     }
                 }
             break;
@@ -120,7 +120,7 @@ static void *receiver(void *arg) {
 
                     sem_post(&d_v_buf_full);
                 }else {
-                    printf(">>Package discarted because the d-v buffer is full\n");
+                    printf(">>Packet discarted, d-v buffer is full\n");
                 }
             break;
         }
@@ -128,15 +128,6 @@ static void *receiver(void *arg) {
 
     return NULL;
 }
-
-// int get_next(int id){
-//     for (size_t i = 0; i < n_routers; i++) {
-//         if(routing_table[i].id_destination == id){
-//             return routing_table[i].id_next;
-//         }
-//     }
-//     return -1;
-// }
 
 static void *sender(void *arg) {
     int to_send_buf_front = 0;
@@ -206,10 +197,6 @@ void print_d_v(){
             printf(" %d", neighbors[i].last_d_v[j]);
         }
     }
-    printf("\nPROXIMOS SALTOS: ");
-    for (size_t i = 0; i < n_routers; i++) {
-        printf(" %d", next_hop[i]);
-    }
     printf("\n");
 }
 
@@ -266,7 +253,7 @@ void send_to_neighbors(void){
 
             sem_post(&to_send_buf_full);
         }else{
-            printf(">>Package discarted because the sender buffer is full\n");
+            printf(">>Packet discarted, sender buffer is full\n");
         }
     }
 }
@@ -279,6 +266,7 @@ int is_smaller(struct timespec left, struct timespec right){
 }
 
 struct timespec check_tout(void) {
+    int tout_expired = 0;
     struct timespec current;
     struct timespec next_tout;
     clock_gettime(CLOCK_REALTIME, &current);
@@ -290,11 +278,14 @@ struct timespec check_tout(void) {
         if(neighbors[i].available){
             if(is_smaller(neighbors[i].d_v_time, current)){
                 neighbors[i].available = 0;
-                recalculate_self_d_v();
+                tout_expired = 1;
             }else if(is_smaller(neighbors[i].d_v_time, next_tout)){
                 next_tout = neighbors[i].d_v_time;
             }
         }
+    }
+    if(tout_expired){
+        recalculate_self_d_v();
     }
 
     return next_tout;
@@ -349,8 +340,6 @@ void new_neighbor(int neighbor_id, int neighbor_cost){
     self_router.last_d_v[neighbor_id-1] = neighbor_cost;
 
     next_hop[neighbor_id-1] = neighbor_id;
-    // routing_table[neighbor_id-1].id_next = neighbor_id;
-    // routing_table[neighbor_id-1].cost = neighbor_cost;
 
     n_neighbors++;
 }
@@ -441,7 +430,7 @@ static void *writer_thread(void *args) {
 
             sem_post(&to_send_buf_full);
         }else {
-            printf(">>Package discarted because the sender buffer is full\n");
+            printf(">>Packet discarted, sender buffer is full\n");
         }
 
         // wait for ack or timeout
