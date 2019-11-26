@@ -459,9 +459,7 @@ int main(int argc, char const *argv[]) {
         printf(">>[ERROR] Router with ID %d not configurated.\n", self_id);
         return 1;
     }
-    // for (size_t i = 0; i < n_routers; i++) {
-    //     routing_table[i].id_destination = i+1;
-    // }
+
     memset(&next_hop, -1, sizeof(int) * N_MAX_ROUTERS);
     // create a socket
     if((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
