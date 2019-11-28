@@ -197,6 +197,7 @@ void print_d_v(){
             printf(" %d", neighbors[i].last_d_v[j]);
         }
     }
+    printf("\nTimestamp: %d",(int)time(NULL));
     printf("\n");
 }
 
