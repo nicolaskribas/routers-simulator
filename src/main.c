@@ -8,100 +8,119 @@
 #include <semaphore.h>  //
 #include <time.h>       // timespec
 #include <string.h>     // memcpy
+#include <unistd.h>
+
+#define MSG_TYPE 0
+#define ACK_TYPE 1
+#define D_V_TYPE 2
+
+// functions
+router *get_neighbor_by_id(int id);
+void send_to_neighbors(void);
+struct timespec timespec_add(struct timespec t1, struct timespec t2);
+
 
 // global variables
-int n_routers;
-routing_row *routing_table = NULL;
-router *routers = NULL; // ip/port of all the routers
+
+struct timespec resend_tout;
+struct timespec receive_tout;
+
+
+int next_hop[N_MAX_ROUTERS];
+
 router self_router;     // ip/port of instanced router
 int sock;               // socket used in the instanced router
 int current_seq_num = 0;
 
-pthread_mutex_t self_d_v_mutex;
-int *self_distance_vector[2];
+router *neighbors = NULL;
+int n_neighbors = 0;
+int n_routers = 0;
 
 pthread_mutex_t ack_mutex;
 
 pthread_mutex_t to_send_buf_mutex;
 sem_t to_send_buf_full;
 sem_t to_send_buf_empty;
-data_packet to_send_buf[TO_SEND_BUF_LEN];
+packet to_send_buf[TO_SEND_BUF_LEN];
 int to_send_buf_rear = 0;
 
 pthread_mutex_t d_v_buf_mutex;
 sem_t d_v_buf_full;
 sem_t d_v_buf_empty;
-data_packet d_v_buf[D_V_BUF_LEN];
+packet d_v_buf[D_V_BUF_LEN];
 int d_v_buf_rear = 0;
 
 
 static void *receiver(void *arg) {
     int recv_len;
-    void *buf = malloc(sizeof(data_packet));
+    packet buf;
     socklen_t addr_len;
     struct sockaddr_in origin_addr;
     int old_origin;
     while(1) {
-        if((recv_len = recvfrom(sock, buf, sizeof(data_packet), 0, (struct sockaddr *) &origin_addr, &addr_len))) {
+        if((recv_len = recvfrom(sock, &buf, sizeof(packet), 0, (struct sockaddr *) &origin_addr, &addr_len)) == -1) {
             printf(">>[ERROR] Can't receive packet.\n");
         }
 
-        switch(*(int *) buf) {
-            case 0: // for message packets
-                if(((message_packet *)buf)->id_destination == self_router.id) {
-                    printf(">>New message from router %d: %s\n", ((message_packet *)buf)->id_origin, ((message_packet *)buf)->message);
-                    ((ack_packet *)buf)->type = 1;
-                    old_origin = ((ack_packet *)buf)->id_origin;
-                    ((ack_packet *)buf)->id_origin = ((message_packet *)buf)->id_destination;
-                    ((ack_packet *)buf)->id_destination = old_origin;
+        switch(buf.type) {
+            case MSG_TYPE: // for message packets
+                if(buf.id_destination == self_router.id) {
+                    printf(">>New message from router %d: %s\n", buf.id_origin, (buf.content)+sizeof(int));
+                    buf.type = ACK_TYPE;
+                    old_origin = buf.id_origin;
+                    buf.id_origin = buf.id_destination;
+                    buf.id_destination = old_origin;
+                }else{
+                    printf(">>Routing packet from %d to %d\n", buf.id_origin, buf.id_destination);
                 }
                 if(!sem_trywait(&to_send_buf_empty)) {
                     pthread_mutex_lock(&to_send_buf_mutex);
 
-                    to_send_buf[to_send_buf_rear] = *(data_packet *)buf;
+                    to_send_buf[to_send_buf_rear] = buf;
                     to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
 
                     pthread_mutex_unlock(&to_send_buf_mutex);
 
                     sem_post(&to_send_buf_full);
                 }else {
-                    printf(">>Package discarted because the buffer is full\n");
+                    printf(">>Packet discarted, sender buffer is full\n");
                 }
             break;
 
-            case 1: // for ack packets
-                if(((ack_packet *)buf)->id_destination == self_router.id) {
-                    if(((ack_packet *)buf)->seq_num == current_seq_num) {
+            case ACK_TYPE: // for ack packets
+                if(buf.id_destination == self_router.id) {
+                    if(*(int *)(buf.content) == current_seq_num) {
                         pthread_mutex_unlock(&ack_mutex);
                     }
                 }else {
+                    printf(">>Routing ack packet from %d to %d\n", buf.id_origin, buf.id_destination);
                     if(!sem_trywait(&to_send_buf_empty)) {
                         pthread_mutex_lock(&to_send_buf_mutex);
 
-                        to_send_buf[to_send_buf_rear] = *(data_packet *)buf;
+                        to_send_buf[to_send_buf_rear] = buf;
                         to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
 
                         pthread_mutex_unlock(&to_send_buf_mutex);
 
                         sem_post(&to_send_buf_full);
                     }else {
-                        printf(">>Package discarted because the buffer is full\n");
+                        printf(">>Packet discarted, sender buffer is full\n");
                     }
                 }
             break;
 
-            case 2: // for distance-vector packets
+            case D_V_TYPE: // for distance-vector packets
                 if(!sem_trywait(&d_v_buf_empty)) {
                     pthread_mutex_lock(&d_v_buf_mutex);
 
-                    d_v_buf[d_v_buf_rear] = *(data_packet *)buf;
+                    d_v_buf[d_v_buf_rear] = buf;
                     d_v_buf_rear = (d_v_buf_rear + 1) % D_V_BUF_LEN;
 
                     pthread_mutex_unlock(&d_v_buf_mutex);
 
                     sem_post(&d_v_buf_full);
                 }else {
-                    printf(">>Package discarted because the buffer is full\n");
+                    printf(">>Packet discarted, d-v buffer is full\n");
                 }
             break;
         }
@@ -111,11 +130,9 @@ static void *receiver(void *arg) {
 }
 
 static void *sender(void *arg) {
-    router next_router;
     int to_send_buf_front = 0;
-
-    data_packet to_send_packet;
-    int size;
+    router *next_router;
+    packet to_send_packet;
 
     struct sockaddr_in dest_addr;
     int addr_len = sizeof(dest_addr);
@@ -134,28 +151,21 @@ static void *sender(void *arg) {
         pthread_mutex_unlock(&to_send_buf_mutex);
         sem_post(&to_send_buf_empty);
 
-        switch(to_send_packet.type) {
-            case 0:
-                size = sizeof(message_packet);
-                break;
-            case 1:
-                size = sizeof(ack_packet);
-                break;
-            case 2:
-                size = sizeof(data_packet);
-                break;
+        if(to_send_packet.type == D_V_TYPE){
+            next_router = get_neighbor_by_id(to_send_packet.id_destination);
+        }else{
+            next_router = get_neighbor_by_id(next_hop[to_send_packet.id_destination-1]);
         }
+        if(next_router == NULL) continue;
+        port = next_router->port;
+        strcpy(ip, next_router->ip);
 
-        next_router = routers[self_distance_vector[1][to_send_packet.id_destination-1]];
-        strcpy(ip, next_router.ip);
-        port = next_router.port;
-
-        if(inet_aton(ip, &dest_addr.sin_addr)) {
+        if(!inet_aton(ip, &dest_addr.sin_addr)) {
             printf(">>[ERROR] inet_aton()\n");
         }
         dest_addr.sin_port = htons(port);
 
-        if(sendto(sock, &to_send_packet, size, 0, (struct sockaddr *) &dest_addr, addr_len)) {
+        if(sendto(sock, &to_send_packet, sizeof(packet), 0, (struct sockaddr *) &dest_addr, addr_len) == -1) {
             printf(">>[ERROR] Can't send packet.\n");
         }
 
@@ -165,131 +175,224 @@ static void *sender(void *arg) {
     return NULL;
 }
 
-void get_neighbors(int **neighbors, int *n_neighbors, int distance_matrix[][n_routers]) {
-    int router_a, router_b, cost;
 
-    for (size_t i = 0; i < n_routers; i++) {
-        memset(distance_matrix[i], -1, sizeof(int)*n_routers);
-    }
-
-    FILE *links_settings = fopen("config/enlaces.config", "r");
-        for(size_t i = 0; fscanf(links_settings,"%d %d %d", &router_a, &router_b, &cost) != EOF; i++) {
-            if(router_a == self_router.id){
-                *neighbors = (int *) realloc(*neighbors, sizeof(int) * ++(*n_neighbors));
-                (*neighbors)[*n_neighbors-1] = router_b;
-                distance_matrix[router_b-1][router_b-1] = cost;
-            }else if(router_b == self_router.id){
-                *neighbors = (int *) realloc(*neighbors, sizeof(int) * ++(*n_neighbors));
-                (*neighbors)[*n_neighbors-1] = router_a;
-                distance_matrix[router_a-1][router_a-1] = cost;
-            }
+router *get_neighbor_by_id(int id){
+    for (size_t i = 0; i < n_neighbors; i++) {
+        if(neighbors[i].id == id){
+            return &neighbors[i];
         }
-    fclose(links_settings);
+    }
+    return NULL;
 }
 
-int recalculate_did_change(int self_distance_vector[][n_routers], int distance_matrix[][n_routers]){
-    int min_cost;
-    int next_hop;
-    int changed = 0;
+void print_d_v(){
+    printf("\n\n>> Distance-vector changed:\n");
+    printf("ID %d:", self_router.id);
     for (size_t j = 0; j < n_routers; j++) {
-        min_cost = -1;
-        next_hop = -1;
-        for (size_t i = 0; i < n_routers; i++) {
-            if(min_cost == -1 && distance_matrix[i][j] != -1) {
-                min_cost = distance_matrix[i][j];
-                next_hop = i;
-            }else if(distance_matrix[i][j] < min_cost && distance_matrix[i][j] != -1) {
-                min_cost = distance_matrix[i][j];
-                next_hop = i;
-            }
-        }
-        pthread_mutex_lock(&self_d_v_mutex);
-        if(min_cost != self_distance_vector[0][j]){
-
-            self_distance_vector[0][j] = min_cost;
-            self_distance_vector[1][j] = next_hop;
-            changed = 1;
-            pthread_mutex_unlock(&self_d_v_mutex);
-        }else{
-            pthread_mutex_unlock(&self_d_v_mutex);
+        printf(" %d", self_router.last_d_v[j]);
+    }
+    for (size_t i = 0; i < n_neighbors; i++) {
+        printf("\nID %d:", neighbors[i].id);
+        for (size_t j = 0; j < n_routers; j++) {
+            printf(" %d", neighbors[i].last_d_v[j]);
         }
     }
-    return changed;
+    printf("\nTimestamp: %d",(int)time(NULL));
+    printf("\n");
+}
+
+void recalculate_self_d_v(void){
+    int changed = 0;
+    int min;
+    int min_index;
+    for (size_t to = 0; to < n_routers; to++) {
+        if(to == self_router.id-1) continue;
+        min = -1;
+        min_index = -1;
+        for (size_t via = 0; via < n_neighbors; via++) {
+            if(!neighbors[via].available || neighbors[via].last_d_v[to] == -1) continue;
+            if(min == -1 || (neighbors[via].last_d_v[to] + neighbors[via].cost) < min){
+                min = neighbors[via].last_d_v[to] + neighbors[via].cost;
+                min_index = via;
+            }
+        }
+        if(min > MAX_COST){
+            self_router.last_d_v[to] = -1;
+            next_hop[to] = -1;
+            changed = 1;
+        }else if(min != self_router.last_d_v[to]){
+            self_router.last_d_v[to] = min;
+            next_hop[to] = neighbors[min_index].id;
+            changed = 1;
+        }else if(min == self_router.last_d_v[to]){
+            next_hop[to] = neighbors[min_index].id;
+        }
+
+    }
+    if(changed){
+        print_d_v();
+        send_to_neighbors();
+    }
+}
+
+void send_to_neighbors(void){
+    packet to_send_d_v;
+    to_send_d_v.type = D_V_TYPE;
+    to_send_d_v.id_origin = self_router.id;
+    memcpy(to_send_d_v.content, self_router.last_d_v, sizeof(int)*n_routers);
+    clock_gettime(CLOCK_REALTIME, &self_router.d_v_time);
+    self_router.d_v_time = timespec_add(self_router.d_v_time, resend_tout);
+    for (size_t i = 0; i < n_neighbors; i++) {
+        to_send_d_v.id_destination = neighbors[i].id;
+        if(!sem_trywait(&to_send_buf_empty)) {
+            pthread_mutex_lock(&to_send_buf_mutex);
+
+            to_send_buf[to_send_buf_rear] = to_send_d_v;
+            to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
+
+            pthread_mutex_unlock(&to_send_buf_mutex);
+
+            sem_post(&to_send_buf_full);
+        }else{
+            printf(">>Packet discarted, sender buffer is full\n");
+        }
+    }
+}
+
+int is_smaller(struct timespec left, struct timespec right){
+    if (left.tv_sec == right.tv_sec)
+        return (left.tv_nsec < right.tv_nsec);
+    else
+        return (left.tv_sec < right.tv_sec);
+}
+
+struct timespec check_tout(void) {
+    int tout_expired = 0;
+    struct timespec current;
+    struct timespec next_tout;
+    clock_gettime(CLOCK_REALTIME, &current);
+    if(is_smaller(self_router.d_v_time, current)){
+        send_to_neighbors();
+    }
+    next_tout = self_router.d_v_time;
+    for (size_t i = 0; i < n_neighbors; i++) {
+        if(neighbors[i].available){
+            if(is_smaller(neighbors[i].d_v_time, current)){
+                neighbors[i].available = 0;
+                tout_expired = 1;
+            }else if(is_smaller(neighbors[i].d_v_time, next_tout)){
+                next_tout = neighbors[i].d_v_time;
+            }
+        }
+    }
+    if(tout_expired){
+        recalculate_self_d_v();
+    }
+
+    return next_tout;
 }
 
 static void *distance_vector(void *arg) {
+    resend_tout.tv_sec = RESEND_TOUT/1000;
+    resend_tout.tv_nsec = (RESEND_TOUT%1000)*1000000;
+    receive_tout.tv_sec = (RESEND_TOUT*3)/1000;
+    receive_tout.tv_nsec = ((RESEND_TOUT*3)%1000)*1000000;
+
     int d_v_buf_front = 0;
-    int *neighbors = NULL;
-    int n_neighbors = 0;
-    int distance_matrix[n_routers][n_routers];
-    data_packet d_v_packet;
-    struct timespec abs_tout;
-
-    get_neighbors(&neighbors, &n_neighbors, distance_matrix);
-
+    packet d_v_packet;
+    router *neighbor_router;
+    struct timespec next_tout;
+    print_d_v();
+    send_to_neighbors();
+    next_tout = check_tout();
     while (1) {
-        if(sem_timedwait(&d_v_buf_full, &abs_tout)){
-
+        if(sem_timedwait(&d_v_buf_full, &next_tout)){
+            next_tout = check_tout();
         }else{
             pthread_mutex_lock(&d_v_buf_mutex);
 
-            d_v_packet = to_send_buf[d_v_buf_front];
+            d_v_packet = d_v_buf[d_v_buf_front];
             d_v_buf_front = (d_v_buf_front + 1) % D_V_BUF_LEN;
 
             pthread_mutex_unlock(&d_v_buf_mutex);
             sem_post(&d_v_buf_empty);
 
-            memcpy(distance_matrix[d_v_packet.id_origin-1], d_v_packet.d_v, sizeof(int)*n_routers);
+            neighbor_router = get_neighbor_by_id(d_v_packet.id_origin);
+            neighbor_router->available = 1;
+            clock_gettime(CLOCK_REALTIME, &neighbor_router->d_v_time);
+            neighbor_router->d_v_time = timespec_add(neighbor_router->d_v_time, receive_tout);
+            memcpy(neighbor_router->last_d_v, d_v_packet.content, N_MAX_ROUTERS*sizeof(int));
 
-            if(recalculate_did_change(self_distance_vector, distance_matrix)){
-                d_v_packet.type = 2;
-                d_v_packet.id_origin = self_router.id;
-                memcpy(d_v_packet.d_v, self_distance_vector[0], sizeof(int)*n_routers);
-                for (size_t i = 0; i < n_neighbors; i++) {
-                    d_v_packet.id_destination = neighbors[i];
-                    if(!sem_trywait(&to_send_buf_empty)) {
-                        pthread_mutex_lock(&to_send_buf_mutex);
-
-                        to_send_buf[to_send_buf_rear] = d_v_packet;
-                        to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
-
-                        pthread_mutex_unlock(&to_send_buf_mutex);
-
-                        sem_post(&to_send_buf_full);
-                    }else{
-                        printf("Descartado\n");
-                    }
-                }
-            }
+            recalculate_self_d_v();
+            next_tout = check_tout();
         }
     }
 
     return NULL;
 }
 
+void new_neighbor(int neighbor_id, int neighbor_cost){
+    neighbors = (router *) realloc(neighbors, sizeof(router) * (n_neighbors+1));
+    neighbors[n_neighbors].id = neighbor_id;
+    neighbors[n_neighbors].cost = neighbor_cost;
+    neighbors[n_neighbors].available = 0;
+    memset(neighbors[n_neighbors].last_d_v, -1, sizeof(int)*N_MAX_ROUTERS);
+
+    self_router.last_d_v[neighbor_id-1] = neighbor_cost;
+
+    next_hop[neighbor_id-1] = neighbor_id;
+
+    n_neighbors++;
+}
+
+void create_neighbors(int self_id){
+    int router_a_id, router_b_id, cost;
+
+    FILE *links_settings = fopen("config/enlaces.config", "r");
+        for(size_t i = 0; fscanf(links_settings,"%d %d %d", &router_a_id, &router_b_id, &cost) != EOF; i++) {
+            if(router_a_id == self_id)
+                new_neighbor(router_b_id, cost);
+            else if(router_b_id == self_id)
+                new_neighbor(router_a_id, cost);
+        }
+    fclose(links_settings);
+}
+
+int find_neighbor_by_id(int id){
+    for (size_t i = 0; i < n_neighbors; i++) {
+        if(neighbors[i].id == id){
+            return i;
+        }
+    }
+    return -1;
+}
+
 int get_routers_settings(int self_id) {
+    memset(self_router.last_d_v, -1, sizeof(int)*N_MAX_ROUTERS);
+    self_router.last_d_v[self_id-1] = 0;
+
+    create_neighbors(self_id);
+
     int flag = 1;
-    router aux;
+    char ip[15];
+    int id;
+    int port;
+    int neighbor_index;
     FILE *routers_settings = fopen("config/roteador.config", "r");
-        for(size_t i = 0, n_routers = 0; fscanf(routers_settings,"%d %d %s", &aux.id, &aux.port, aux.ip) != EOF; i++) {
-            routers = (router *) realloc(routers, sizeof(router) * ++(n_routers));
-
-            routers[i].id = aux.id;
-            routers[i].port = aux.port;
-            sprintf((routers)[i].ip, "%s", aux.ip);
-
-            if(aux.id == self_id) {
+        for(size_t i = 0; fscanf(routers_settings,"%d %d %s", &id, &port, ip) != EOF; i++, n_routers++) {
+            if(id == self_id) {
                 flag = 0;
-                self_router = aux;
+                self_router.id = id;
+                self_router.port = port;
+                strcpy(self_router.ip, ip);
+            }else if((neighbor_index = find_neighbor_by_id(id)) != -1) {
+                neighbors[neighbor_index].port = port;
+                strcpy(neighbors[neighbor_index].ip, ip);
             }
         }
     fclose(routers_settings);
 
-    if(flag) {
-        return 1;
-    }
-
-    return 0;
+    return flag;
 }
 
 // add the time of two timespec structures
@@ -301,6 +404,47 @@ struct timespec timespec_add(struct timespec t1, struct timespec t2) {
         sec += 1;
     }
     return (struct timespec) { .tv_sec = sec, .tv_nsec = nsec};
+}
+
+static void *writer_thread(void *args) {
+    // terminal interface to create new messages
+    packet new_message;
+    struct timespec abs_tout;
+    struct timespec timeout;
+    timeout.tv_sec = ACK_TOUT/1000;
+    timeout.tv_nsec = (ACK_TOUT%1000)*1000000;
+    printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
+    while(1) {
+        scanf("%d ", &new_message.id_destination);
+        fgets(new_message.content+sizeof(int), MESSAGE_LEN, stdin);
+        new_message.type = MSG_TYPE;
+        new_message.id_origin = self_router.id;
+        *new_message.content = ++current_seq_num;
+
+        if(!sem_trywait(&to_send_buf_empty)) {
+            pthread_mutex_lock(&to_send_buf_mutex);
+
+            to_send_buf[to_send_buf_rear] = new_message;
+            to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
+
+            pthread_mutex_unlock(&to_send_buf_mutex);
+
+            sem_post(&to_send_buf_full);
+        }else {
+            printf(">>Packet discarted, sender buffer is full\n");
+        }
+
+        // wait for ack or timeout
+        clock_gettime(CLOCK_REALTIME, &abs_tout);
+        abs_tout = timespec_add(abs_tout, timeout);
+        if(pthread_mutex_timedlock(&ack_mutex, &abs_tout)) {
+            printf(">>Ack expired\n");
+        }else{
+            printf(">>Ack received\n");
+        }
+
+    }
+    return NULL;
 }
 
 int main(int argc, char const *argv[]) {
@@ -317,8 +461,9 @@ int main(int argc, char const *argv[]) {
         return 1;
     }
 
+    memset(&next_hop, -1, sizeof(int) * N_MAX_ROUTERS);
     // create a socket
-    if((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))) {
+    if((sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1) {
         printf(">>[ERROR] Can't create a socket.\n");
         return 1;
     }
@@ -333,65 +478,23 @@ int main(int argc, char const *argv[]) {
         return 1;
     }
 
-    //
-    self_distance_vector[0] = malloc(sizeof(int)*n_routers);
-    memset(self_distance_vector[0], -1, sizeof(int)*n_routers);
-    self_distance_vector[1] = malloc(sizeof(int)*n_routers);
-    memset(self_distance_vector[1], -1, sizeof(int)*n_routers);
     //  initiate all semaphores
     sem_init(&to_send_buf_full, 0 , 0);
     sem_init(&to_send_buf_empty, 0, TO_SEND_BUF_LEN);
 
     sem_init(&d_v_buf_full, 0 , 0);
     sem_init(&d_v_buf_empty, 0, D_V_BUF_LEN);
-
+    pthread_mutex_lock(&ack_mutex);
     // create all needed threads
     pthread_t receiver_thread;
     pthread_t sender_thread;
     pthread_t distance_vector_thread;
+    pthread_t writer;
     pthread_create(&receiver_thread, NULL, receiver, NULL);
     pthread_create(&sender_thread, NULL, sender, NULL);
     pthread_create(&distance_vector_thread, NULL, distance_vector, NULL);
+    pthread_create(&writer, NULL, writer_thread, NULL);
 
-    // terminal interface to create new messages
-    message_packet new_message;
-    struct timespec abs_tout;
-    struct timespec timeout;
-    timeout.tv_sec = ACK_TOUT/1000;
-    timeout.tv_nsec = (ACK_TOUT%1000)*1000000;
-
-    while(1) {
-        printf(">>To send a new message enter the ID of the destination followed by the message with up to %d caracteres\n>>Like this: '2 Hello router number 2!'\n", MESSAGE_LEN);
-
-        scanf("%d ", &new_message.id_destination);
-        fgets(new_message.message, MESSAGE_LEN, stdin);
-        new_message.type = 0;
-        new_message.id_origin = self_router.id;
-        new_message.seq_num = current_seq_num;
-
-        if(!sem_trywait(&to_send_buf_empty)) {
-            pthread_mutex_lock(&to_send_buf_mutex);
-
-            to_send_buf[to_send_buf_rear] = *(data_packet *)(&new_message);
-            to_send_buf_rear = (to_send_buf_rear + 1) % TO_SEND_BUF_LEN;
-
-            pthread_mutex_unlock(&to_send_buf_mutex);
-
-            sem_post(&to_send_buf_full);
-        }else {
-            printf(">>Package discarted because the buffer is full\n");
-        }
-
-        // wait for ack or timeout
-        clock_gettime(CLOCK_REALTIME, &abs_tout);
-        abs_tout = timespec_add(abs_tout, timeout);
-        if(pthread_mutex_timedlock(&ack_mutex, &abs_tout)) {
-            printf(">>Ack expired\n");
-        }else{
-            printf(">>Ack received\n");
-        }
-
-    }
-
+    pthread_join(writer, NULL);
     return 0;
 }
